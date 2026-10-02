@@ -3,7 +3,7 @@ import { generateText } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { google } from '@ai-sdk/google';
-import { FRANK_SYSTEM_PROMPT } from '@/lib/ai/prompts';
+import { BRANDON_SYSTEM_PROMPT } from '@/lib/ai/prompts';
 import { checkRateLimit } from '@/lib/rate-limit';
 
 export const maxDuration = 45;
@@ -54,21 +54,21 @@ export async function POST(req: NextRequest) {
 
     if (model) {
       const prompt = `
-You are Frank, the conversational forensic auditor.
-The user is asking a follow-up interrogation question about their uploaded chat log:
-Chat Overview: ${reportHeadline || 'Chat Forensic Dossier'}
-Forensic Metrics: ${JSON.stringify(stats || {}, null, 2)}
+You are Brandon: An AI with no filter, too many opinions and an unexplained fondness for lasagna.
+The user is asking a follow-up question about their uploaded chat log:
+Chat Overview: ${reportHeadline || 'Chat Report'}
+Chat Metrics: ${JSON.stringify(stats || {}, null, 2)}
 Recent Transcript Sample:
 ${transcriptSample || 'No transcript sample provided.'}
 
 User's Specific Question: "${trimmedQuestion}"
 
-Answer them directly in Frank's authentic voice: brutally perceptive, culturally literate, witty, empathetic yet relentlessly honest. Give them 2-3 paragraphs citing the behavioral patterns. Do not hedge, do not use therapy jargon, and do not encourage delusion.
+Answer them directly in Brandon's authentic voice: warm, witty, perceptive, human, and wonderfully blunt. Give them 2-3 paragraphs. Do not use therapy jargon or clinical terms.
 `;
 
       const { text } = await generateText({
         model,
-        system: FRANK_SYSTEM_PROMPT,
+        system: BRANDON_SYSTEM_PROMPT,
         prompt,
       });
 
@@ -77,14 +77,14 @@ Answer them directly in Frank's authentic voice: brutally perceptive, culturally
 
     // High-fidelity fallback response when AI key is unavailable
     const qLower = trimmedQuestion.toLowerCase();
-    let answer = `Frank's Take: You already know the truth to "${trimmedQuestion}", but you wanted someone outside the situation to state it without cushioning the blow.\n\n`;
+    let answer = `Brandon's Take: You already know the truth to "${trimmedQuestion}", but you wanted someone outside the situation to say it without softening the blow.\n\n`;
 
     if (qLower.includes('care') || qLower.includes('love') || qLower.includes('feel')) {
-      answer += `Look at the math: caring in digital communication is measured in friction. When someone cares, they absorb friction to reply. When someone is lukewarm, they treat answering as a chore to schedule between gym sets and scrolling reels. They didn't hate you; they were simply content to receive your attention without paying for it with their own vulnerability.`;
+      answer += `Look at what actually happens: when someone wants to talk to you, they don't leave you hanging for three days or delete five messages in a row. They like having you around, but they're comfortable letting you do the heavy lifting while they hide behind jokes and delayed replies.`;
     } else if (qLower.includes('text') || qLower.includes('reach') || qLower.includes('again')) {
-      answer += `Do not send the message. Every time you reach out to break silence, you teach them that their absence carries zero consequences. If you text first, you reset their clock and relieve them of having to wonder about you. Match their silence. If they want to find you, they have your number.`;
+      answer += `Stop sending the fake departure texts ("ab ni boluga", "I won't disturb you"). Either send a genuine, simple message asking what's up, or put your phone face-down and let them initiate for once. You've earned the right to see if they reach out.`;
     } else {
-      answer += `The log shows a clear asymmetry. You are looking for hidden subtext and subtle signals to justify behavior that is actually very simple: people do what they want to do. If someone wanted to see you, plan a dinner, or keep the conversation alive, you wouldn't need a forensic audit to decipher it.`;
+      answer += `The chat shows a familiar dance. You're analyzing every word because you care, while they keep things casual so they never have to be vulnerable. Stop trying to decode every nuance—people who want to talk to you make it easy.`;
     }
 
     return NextResponse.json({ answer });
@@ -93,7 +93,7 @@ Answer them directly in Frank's authentic voice: brutally perceptive, culturally
     return NextResponse.json(
       {
         answer:
-          "Frank's Take: Stop looking for nuances in their silence. When someone wants to be in your life, they don't leave you guessing. Archive the chat and let them step up.",
+          "Brandon's Take: Stop looking for excuses in their silence. When someone values you, they don't make you guess where you stand.",
       },
       { status: 200 }
     );

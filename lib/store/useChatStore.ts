@@ -3,6 +3,7 @@ import { ParsedMessage } from '../parser/whatsapp';
 import { ChatForensicStats } from '../forensics/metrics';
 import { TurningPointResult } from '../forensics/turning-point';
 import { FreePreview, FullReport } from '../ai/schemas';
+import { DetailedStats, computeDetailedStats, synthesizeDetailedStats } from '../forensics/detailed-stats';
 
 export type ChatCategory =
   | 'romantic'
@@ -26,6 +27,7 @@ interface ChatState {
   fileName: string;
   parsedMessages: ParsedMessage[];
   stats: ChatForensicStats | null;
+  detailedStats: DetailedStats | null;
   turningPoint: TurningPointResult | null;
   preview: FreePreview | null;
   fullReport: FullReport | null;
@@ -49,10 +51,12 @@ interface ChatState {
   setSource: (source: ChatSource) => void;
   setUserNote: (note: string) => void;
   setUploadedChat: (fileName: string, rawText: string) => void;
+  setDetailedStats: (stats: DetailedStats | null) => void;
   setParsedData: (
     messages: ParsedMessage[],
     stats: ChatForensicStats | null,
-    turningPoint: TurningPointResult | null
+    turningPoint: TurningPointResult | null,
+    customDetailed?: DetailedStats | null
   ) => void;
   setScanProgress: (progress: number, stage: string) => void;
   setPreview: (preview: FreePreview) => void;
@@ -86,6 +90,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   fileName: '',
   parsedMessages: [],
   stats: null,
+  detailedStats: null,
   turningPoint: null,
   preview: null,
   fullReport: null,
@@ -103,6 +108,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setCategory: (category) => set({ category }),
   setConversationId: (conversationId) => set({ conversationId }),
   setDeleteToken: (deleteToken) => set({ deleteToken }),
+  setDetailedStats: (detailedStats) => set({ detailedStats }),
   ensureReportIdentity: () => {
     const existing = get().conversationId;
     if (existing) return existing;
@@ -124,6 +130,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (typeof window === 'undefined') return;
     try {
       const s = get();
+      if (!s.conversationId) return;
+
+      // Ensure detailedStats is available
+      let detailed = s.detailedStats;
+      if (!detailed && s.stats) {
+        if (s.parsedMessages.length > 0) {
+          try {
+            detailed = computeDetailedStats(s.parsedMessages, s.stats);
+          } catch {
+            detailed = synthesizeDetailedStats(s.stats);
+          }
+        } else {
+          detailed = synthesizeDetailedStats(s.stats);
+        }
+      }
+
+      // Compact payload: NEVER include rawText or 10,000 raw messages
+      // to ensure localStorage never hits 5MB quota
       const payload = {
         conversationId: s.conversationId,
         deleteToken: s.deleteToken,
@@ -132,9 +156,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         userNote: s.userNote,
         reportLanguage: s.reportLanguage,
         fileName: s.fileName,
-        rawText: s.rawText,
-        parsedMessages: s.parsedMessages,
         stats: s.stats,
+        detailedStats: detailed,
         turningPoint: s.turningPoint,
         preview: s.preview,
         fullReport: s.fullReport,
@@ -143,25 +166,47 @@ export const useChatStore = create<ChatState>((set, get) => ({
         nameMap: s.nameMap,
         email: s.email,
         lastEmail: s.email || s.lastEmail,
+        updatedAt: new Date().toISOString(),
       };
-      if (!payload.conversationId) return;
-      window.localStorage.setItem(`frank:conv:${payload.conversationId}`, JSON.stringify(payload));
-    } catch {
-      // ignore quota / serialization errors
+
+      window.localStorage.setItem(`brandon:conv:${s.conversationId}`, JSON.stringify(payload));
+
+      // Also update local reports directory index for instant fast lookup
+      try {
+        const rawIndex = window.localStorage.getItem('brandon:reports_index');
+        const indexList = rawIndex ? JSON.parse(rawIndex) : [];
+        const names = (s.stats?.participants ?? []).map((p) => p.name).join(' & ');
+        const entry = {
+          id: s.conversationId,
+          title: names || s.fileName || 'Conversation',
+          category: s.category,
+          createdAt: new Date().toISOString(),
+          messageCount: s.stats?.totalMessages ?? 0,
+        };
+        const filtered = Array.isArray(indexList) ? indexList.filter((item: { id: string }) => item.id !== s.conversationId) : [];
+        filtered.unshift(entry);
+        window.localStorage.setItem('brandon:reports_index', JSON.stringify(filtered.slice(0, 50)));
+      } catch {
+        // ignore index serialization errors
+      }
+    } catch (err) {
+      console.warn('[useChatStore] persistToLocal error:', err);
     }
   },
   loadFromLocal: (id: string) => {
     if (typeof window === 'undefined') return false;
     try {
-      const raw = window.localStorage.getItem(`frank:conv:${id}`);
+      const raw =
+        window.localStorage.getItem(`brandon:conv:${id}`) ||
+        window.localStorage.getItem(`frank:conv:${id}`);
       if (!raw) return false;
       const data = JSON.parse(raw);
-      const reviveMessages: ParsedMessage[] = Array.isArray(data.parsedMessages)
-        ? data.parsedMessages.map((m: ParsedMessage & { timestamp: string | Date }) => ({
-            ...m,
-            timestamp: new Date(m.timestamp),
-          }))
-        : [];
+
+      let detailed = data.detailedStats ?? null;
+      if (!detailed && data.stats) {
+        detailed = synthesizeDetailedStats(data.stats);
+      }
+
       set({
         conversationId: data.conversationId ?? id,
         deleteToken: typeof data.deleteToken === 'string' ? data.deleteToken : null,
@@ -170,9 +215,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         userNote: data.userNote ?? '',
         reportLanguage: data.reportLanguage ?? 'en',
         fileName: data.fileName ?? '',
-        rawText: data.rawText ?? '',
-        parsedMessages: reviveMessages,
+        rawText: '',
+        parsedMessages: [],
         stats: data.stats ?? null,
+        detailedStats: detailed,
         turningPoint: data.turningPoint ?? null,
         preview: data.preview ?? null,
         fullReport: data.fullReport ?? null,
@@ -195,8 +241,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setSource: (source) => set({ source }),
   setUserNote: (userNote) => set({ userNote }),
   setUploadedChat: (fileName, rawText) => set({ fileName, rawText }),
-  setParsedData: (parsedMessages, stats, turningPoint) =>
-    set({ parsedMessages, stats, turningPoint }),
+  setParsedData: (parsedMessages, stats, turningPoint, customDetailed) => {
+    let detailed = customDetailed ?? null;
+    if (!detailed && parsedMessages.length > 0 && stats) {
+      try {
+        detailed = computeDetailedStats(parsedMessages, stats);
+      } catch {
+        detailed = synthesizeDetailedStats(stats);
+      }
+    } else if (!detailed && stats) {
+      detailed = synthesizeDetailedStats(stats);
+    }
+    set({ parsedMessages, stats, turningPoint, detailedStats: detailed });
+  },
   setScanProgress: (scanProgress, scanStage) => set({ scanProgress, scanStage }),
   setPreview: (preview) => set({ preview }),
   setFullReport: (fullReport) => set({ fullReport }),

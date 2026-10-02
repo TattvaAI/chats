@@ -76,40 +76,60 @@ function CountUpStat({ value }: { value: number | string }) {
 }
 
 export function StatsBanner({
-  total = '108K',
-  weekly = '6.9K',
-  daily = '1.2K',
+  total = '151K',
+  weekly = '33.2K',
+  daily = '5K',
   className = '',
 }: StatsBannerProps = {}) {
   return (
     <section className={`w-full border-y border-border/60 bg-muted/30 py-12 sm:py-16 ${className}`.trim()}>
-      <div className="mx-auto flex max-w-4xl flex-col items-center gap-6 px-4 text-center sm:gap-8 sm:px-6">
-        <h3 className="font-serif text-2xl font-medium tracking-tight sm:text-3xl">
-          Frank has been busy
-        </h3>
-        <div className="grid w-full grid-cols-3 gap-2 sm:gap-6 lg:gap-8">
-          <div className="flex flex-col items-center gap-1 sm:gap-1.5">
-            <span className="font-mono text-2xl font-bold tracking-tight text-foreground sm:text-3xl lg:text-4xl">
+      <div className="mx-auto flex max-w-5xl flex-col items-center gap-6 px-4 text-center sm:gap-8 sm:px-6">
+        <h2 className="font-serif text-3xl font-medium tracking-tight sm:text-4xl lg:text-5xl text-foreground">
+          Brandon has been busy
+        </h2>
+        <div className="grid w-full grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4 lg:gap-5">
+          <div className="flex h-full flex-col items-center justify-center gap-2 rounded-xl border border-border bg-card px-3 py-8 text-center shadow-xs sm:gap-2.5 sm:py-10">
+            <span className="font-mono text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
               <CountUpStat value={total} />
             </span>
-            <span className="text-[11px] leading-tight text-muted-foreground sm:text-xs md:text-sm">
+            <span className="text-xs text-muted-foreground sm:text-sm">
               Total reports written
             </span>
           </div>
-          <div className="flex flex-col items-center gap-1 sm:gap-1.5">
-            <span className="font-mono text-2xl font-bold tracking-tight text-emerald-600 sm:text-3xl lg:text-4xl">
+
+          <div className="flex h-full flex-col items-center justify-center gap-2 rounded-xl border border-border bg-card px-3 py-8 text-center shadow-xs sm:gap-2.5 sm:py-10">
+            <span className="font-mono text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
               <CountUpStat value={weekly} />
             </span>
-            <span className="text-[11px] leading-tight text-muted-foreground sm:text-xs md:text-sm">
+            <span className="text-xs text-muted-foreground sm:text-sm">
               Reports written this week
             </span>
           </div>
-          <div className="flex flex-col items-center gap-1 sm:gap-1.5">
-            <span className="font-mono text-2xl font-bold tracking-tight text-amber-600 sm:text-3xl lg:text-4xl">
+
+          <div className="flex h-full flex-col items-center justify-center gap-2 rounded-xl border border-border bg-card px-3 py-8 text-center shadow-xs sm:gap-2.5 sm:py-10">
+            <span className="font-mono text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
               <CountUpStat value={daily} />
             </span>
-            <span className="text-[11px] leading-tight text-muted-foreground sm:text-xs md:text-sm">
+            <span className="text-xs text-muted-foreground sm:text-sm">
               Reports written today
+            </span>
+          </div>
+
+          <div className="flex h-full flex-col items-center justify-center gap-2 rounded-xl border border-border bg-card px-3 py-8 text-center shadow-xs sm:gap-2.5 sm:py-10">
+            <span className="flex items-center gap-2 sm:gap-3 py-1">
+              <img
+                src="/icons/whatsapp.svg"
+                alt="WhatsApp"
+                className="size-8 sm:size-9"
+              />
+              <img
+                src="/icons/imessage.svg"
+                alt="iMessage"
+                className="size-8 sm:size-9"
+              />
+            </span>
+            <span className="text-xs text-muted-foreground sm:text-sm">
+              WhatsApp &amp; iMessage
             </span>
           </div>
         </div>

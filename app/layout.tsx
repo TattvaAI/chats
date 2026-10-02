@@ -20,19 +20,19 @@ const ebGaramond = EB_Garamond({
 });
 
 export const metadata: Metadata = {
-  title: 'AI WhatsApp Chat Analyzer — What Frank Thinks',
+  title: 'What Brandon Thinks — The truth about your chats',
   description:
-    "Upload a WhatsApp or iMessage chat and get an AI report on what's really going on: who cares more, what changed, and what Frank honestly thinks of everyone in it.",
-  applicationName: 'What Frank Thinks',
+    "Upload a WhatsApp or iMessage chat and get an AI report on what's really going on: who cares more, what changed, and what Brandon honestly thinks of everyone in it.",
+  applicationName: 'What Brandon Thinks',
   icons: {
     icon: '/icon.png',
     apple: '/apple-icon.png',
   },
   openGraph: {
-    title: 'AI WhatsApp Chat Analyzer — What Frank Thinks',
+    title: 'What Brandon Thinks — The truth about your chats',
     description:
-      "Upload a WhatsApp or iMessage chat and get an AI report on what's really going on: who cares more, what changed, and what Frank honestly thinks of everyone in it.",
-    siteName: 'What Frank Thinks',
+      "Upload a WhatsApp or iMessage chat and get an AI report on what's really going on: who cares more, what changed, and what Brandon honestly thinks of everyone in it.",
+    siteName: 'What Brandon Thinks',
     type: 'website',
   },
 };
@@ -42,14 +42,14 @@ const jsonLd = {
   '@graph': [
     {
       '@type': 'Organization',
-      name: 'What Frank Thinks',
-      alternateName: 'WhatFrankThinks',
+      name: 'What Brandon Thinks',
+      alternateName: 'WhatBrandonThinks',
       description:
-        "Upload a WhatsApp or iMessage chat and get an AI report on what's really going on: who cares more, what changed, and what Frank honestly thinks of everyone in it.",
+        "Upload a WhatsApp or iMessage chat and get an AI report on what's really going on: who cares more, what changed, and what Brandon honestly thinks of everyone in it.",
     },
     {
       '@type': 'WebSite',
-      name: 'What Frank Thinks',
+      name: 'What Brandon Thinks',
       inLanguage: 'en',
     },
   ],

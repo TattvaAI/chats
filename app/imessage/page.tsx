@@ -18,10 +18,10 @@ export default function IMessagePage() {
 
             <div className="flex flex-col items-center gap-4 max-w-2xl">
               <h1 className="font-serif text-4xl font-normal leading-[1.18] tracking-tight text-foreground sm:text-5xl lg:text-6xl text-balance">
-                Upload an iMessage chat. Frank tells you what&apos;s really going on.
+                Upload an iMessage chat. Brandon tells you what&apos;s really going on.
               </h1>
               <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-                Export any iMessage conversation from your Mac in two clicks. Frank reads every message and writes what he really thinks of everyone in it.
+                Export any iMessage conversation from your Mac in two clicks. Brandon reads every message and writes what he really thinks of everyone in it.
               </p>
             </div>
 
@@ -76,7 +76,7 @@ export default function IMessagePage() {
                 </div>
                 <h3 className="font-serif text-xl font-medium">Method 2: Mac Companion App</h3>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Download our lightweight Apple Silicon app. It reads the local conversation database with your direct permission and saves a `.txt` file ready to drop into Frank.
+                  Download our lightweight Apple Silicon app. It reads the local conversation database with your direct permission and saves a `.txt` file ready to drop into Brandon.
                 </p>
                 <Link
                   href="/setup?source=imessage"

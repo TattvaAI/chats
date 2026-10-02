@@ -29,7 +29,7 @@ export default function RelationshipPage() {
                 What does he <span className="italic font-serif">actually</span> think of you?
               </h1>
               <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-                Frank reads every message and writes what was real, what changed, and what to do now.
+                Brandon reads every message and writes what was real, what changed, and what to do now.
               </p>
             </div>
 
@@ -61,7 +61,7 @@ export default function RelationshipPage() {
         <section className="w-full border-t border-border bg-card py-20 px-6 sm:px-10">
           <div className="mx-auto flex max-w-5xl flex-col items-center gap-12">
             <h2 className="text-center font-serif text-3xl font-medium tracking-tight sm:text-4xl">
-              What Frank reveals in relationship chats
+              What Brandon reveals in relationship chats
             </h2>
 
             <div className="grid w-full grid-cols-1 gap-6 sm:grid-cols-3">
@@ -71,7 +71,7 @@ export default function RelationshipPage() {
                 </div>
                 <h3 className="font-serif text-lg font-medium">The Exact Week It Changed</h3>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Frank pinpoints the exact week the energy shifted, response times widened, and the excuses started.
+                  Brandon pinpoints the exact week the energy shifted, response times widened, and the excuses started.
                 </p>
               </div>
 
@@ -79,7 +79,7 @@ export default function RelationshipPage() {
                 <div className="flex size-10 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600">
                   <HeartCrack className="size-5" />
                 </div>
-                <h3 className="font-serif text-lg font-medium">The Balance of Power</h3>
+                <h3 className="font-serif text-lg font-medium">The Dynamic & Unspoken Truth</h3>
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   Who initiates after silence, who double-texts, and who acts unbothered while calculating every reply.
                 </p>
@@ -89,9 +89,9 @@ export default function RelationshipPage() {
                 <div className="flex size-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600">
                   <MessageCircleHeart className="size-5" />
                 </div>
-                <h3 className="font-serif text-lg font-medium">Tactical Advice</h3>
+                <h3 className="font-serif text-lg font-medium">The Practical Advice</h3>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Frank tells you exactly what to send next—or gives you the strict order to leave them on read.
+                  Brandon tells you exactly what to send next—or gives you the strict order to leave them on read.
                 </p>
               </div>
             </div>

@@ -22,7 +22,7 @@ const TESTIMONIALS: TestimonialItem[] = [
     role: 'Ex',
     image: '/images/testimonials/camille.webp',
     quote:
-      'He left three weeks ago and I was rereading everything at 3am. Frank found the exact week he started pulling away and explained what I kept excusing. It said the love was real and the capacity wasn\'t. I finally slept.',
+      'He left three weeks ago and I was rereading everything at 3am. Brandon found the exact week he started pulling away and explained what I kept excusing. It said the love was real and the capacity wasn\'t. I finally slept.',
   },
   {
     name: 'Valeria',
@@ -31,7 +31,7 @@ const TESTIMONIALS: TestimonialItem[] = [
     role: 'Situationship',
     image: '/images/testimonials/valeria.jpg',
     quote:
-      'Eight months of "we\'re not anything" and I couldn\'t tell if I was crazy. Frank read our chat and put the whole pattern on one page: who initiated, who disappeared, what I said yes to. The second report told me what to do about it.',
+      'Eight months of "we\'re not anything" and I couldn\'t tell if I was crazy. Brandon read our chat and put the whole pattern on one page: who initiated, who disappeared, what I said yes to. The second report told me what to do about it.',
   },
   {
     name: 'Hugo',
@@ -40,7 +40,7 @@ const TESTIMONIALS: TestimonialItem[] = [
     role: 'Boys group',
     image: '/images/testimonials/hugo.webp',
     quote:
-      'Fifteen years of group chat and Frank nailed all seven of us in one page each. The awards section got screenshotted into the chat within a minute and we argued about the predictions for a week. Nobody was spared, nobody\'s angry.',
+      'Fifteen years of group chat and Brandon nailed all seven of us in one page each. The awards section got screenshotted into the chat within a minute and we argued about the predictions for a week. Nobody was spared, nobody\'s angry.',
   },
   {
     name: 'Chloé',
@@ -67,7 +67,7 @@ const TESTIMONIALS: TestimonialItem[] = [
     role: 'Husband',
     image: '/images/testimonials/nadia.webp',
     quote:
-      'Twelve years, two kids, and a WhatsApp thread that had become a logistics desk. Frank read it like a neutral witness: what we stopped saying, when, and why. Harder than couples therapy and more useful. We\'ve started talking again.',
+      'Twelve years, two kids, and a WhatsApp thread that had become a logistics desk. Brandon read it like a neutral witness: what we stopped saying, when, and why. Harder than couples therapy and more useful. We\'ve started talking again.',
   },
   {
     name: 'Thiago',
@@ -76,7 +76,7 @@ const TESTIMONIALS: TestimonialItem[] = [
     role: 'Uni group',
     image: '/images/testimonials/thiago.webp',
     quote:
-      'Four of us from the same course. Frank worked out who carries the group, who only shows up to split the bill, and wrote a glossary of our slang that was scarily accurate. I dropped it in the chat during a lecture. Three hundred messages in an hour.',
+      'Four of us from the same course. Brandon worked out who carries the group, who only shows up to split the bill, and wrote a glossary of our slang that was scarily accurate. I dropped it in the chat during a lecture. Three hundred messages by the end of the hour.',
   },
   {
     name: 'Jonas',

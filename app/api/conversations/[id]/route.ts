@@ -50,6 +50,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const preview = extract<object>(previewEnvelope, 'preview') ?? (isRecord(previewEnvelope) ? previewEnvelope : null);
     const stats =
       extract<object>(previewEnvelope, 'stats') ?? extract<object>(fullEnvelope, 'stats') ?? null;
+    const detailedStats =
+      extract<object>(previewEnvelope, 'detailedStats') ?? extract<object>(fullEnvelope, 'detailedStats') ?? null;
     const turningPoint =
       extract<object>(previewEnvelope, 'turningPoint') ??
       extract<object>(fullEnvelope, 'turningPoint') ??
@@ -72,6 +74,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         fileName,
       },
       stats,
+      detailedStats,
       turningPoint,
       preview,
       fullReport,

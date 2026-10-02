@@ -23,10 +23,10 @@ export default function HomePage() {
             {/* Headline & Subhead */}
             <div className="flex flex-col items-center gap-3 sm:gap-4 max-w-2xl px-2 sm:px-0">
               <h1 className="font-serif text-4xl font-normal leading-[1.18] tracking-tight text-foreground sm:text-5xl lg:text-6xl text-balance">
-                Upload a chat. <span className="underline decoration-amber-400 underline-offset-6">Frank</span> tells you what&apos;s really going on.
+                Upload a chat. <span className="underline decoration-amber-400 underline-offset-6">Brandon</span> tells you what&apos;s really going on.
               </h1>
               <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-                Frank reads every message and writes what he really thinks about everyone in it.
+                Brandon reads every message and writes what he really thinks about everyone in it.
               </p>
             </div>
 
@@ -66,10 +66,10 @@ export default function HomePage() {
         <section className="w-full py-14 sm:py-20 px-4 sm:px-6 text-center border-t border-border bg-card">
           <div className="mx-auto flex max-w-2xl flex-col items-center gap-5 sm:gap-6">
             <h2 className="font-serif text-3xl font-medium sm:text-4xl">
-              Ready to find out what Frank thinks?
+              Ready to find out what Brandon thinks?
             </h2>
             <p className="text-muted-foreground text-sm sm:text-base">
-              Takes 2 minutes. Free preview before you decide. Your chat stays private.
+              Takes 2 minutes. Completely free. Your chat stays private.
             </p>
             <Link
               href="/setup"

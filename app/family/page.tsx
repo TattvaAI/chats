@@ -18,10 +18,10 @@ export default function FamilyPage() {
 
             <div className="flex flex-col items-center gap-4 max-w-2xl">
               <h1 className="font-serif text-4xl font-normal leading-[1.18] tracking-tight text-foreground sm:text-5xl lg:text-6xl text-balance">
-                What does Frank think of you and your family?
+                What does Brandon think of you and your family?
               </h1>
               <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-                Upload the family WhatsApp group, or just the chat with your mum, dad, sister or brother. Frank reads every message and writes who runs it and what nobody says out loud.
+                Upload the family WhatsApp group, or just the chat with your mum, dad, sister or brother. Brandon reads every message and writes who runs it and what nobody says out loud.
               </p>
             </div>
 
@@ -30,7 +30,7 @@ export default function FamilyPage() {
                 href="/setup?category=family"
                 className="group inline-flex h-14 w-full sm:w-auto items-center justify-center gap-3 rounded-xl bg-primary px-8 text-lg font-medium text-primary-foreground shadow-md transition-all hover:bg-primary/90 active:scale-[0.98] sm:min-w-64"
               >
-                <span>Audit Your Family Chat</span>
+                <span>Analyze Your Family Chat</span>
                 <ArrowRight className="size-5 transition-transform group-hover:translate-x-1" />
               </Link>
             </div>
@@ -61,7 +61,7 @@ export default function FamilyPage() {
                 </div>
                 <h3 className="font-serif text-lg font-medium">Who Actually Runs It</h3>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Spoiler alert: it isn&apos;t Dad. Frank identifies the true emotional gatekeeper of the household.
+                  Spoiler alert: it isn&apos;t Dad. Brandon identifies the true emotional gatekeeper of the household.
                 </p>
               </div>
 

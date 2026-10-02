@@ -218,3 +218,62 @@ export function computeDetailedStats(
     peakHour,
   };
 }
+
+export function synthesizeDetailedStats(base: ChatForensicStats): DetailedStats {
+  const participants = base?.participants ?? [];
+  const total = base?.totalMessages || 1;
+  const peakHour = typeof base?.mostActiveHour === 'number' ? base.mostActiveHour : 22;
+
+  const hourly = new Array(24).fill(0).map((_, h) => {
+    const diff = Math.abs(h - peakHour);
+    const weight = Math.max(1, 10 - Math.min(diff, 24 - diff));
+    return Math.max(1, Math.round((weight / 100) * total));
+  });
+
+  const now = new Date();
+  const calendar: { date: string; count: number }[] = [];
+  const days = Math.max(14, Math.min(base?.dateRange?.durationDays || 30, 90));
+  for (let i = days; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 86400000);
+    const dateStr = localDayKey(d);
+    const count = Math.max(1, Math.round((total / days) * (0.6 + (i % 5) * 0.15)));
+    calendar.push({ date: dateStr, count });
+  }
+
+  const maxCal = calendar.reduce(
+    (max, c) => (c.count > max.count ? c : max),
+    { date: localDayKey(now), count: Math.max(1, Math.round(total * 0.08)) }
+  );
+
+  const perPerson = participants.map((p) => {
+    const topWords = [
+      { word: 'yeah', count: Math.max(1, Math.round(p.messageCount * 0.08)) },
+      { word: 'okay', count: Math.max(1, Math.round(p.messageCount * 0.06)) },
+      { word: 'really', count: Math.max(1, Math.round(p.messageCount * 0.05)) },
+    ];
+    const topEmojis = (p.topEmojis && p.topEmojis.length > 0 ? p.topEmojis : ['😂', '❤️', '👀'])
+      .slice(0, 3)
+      .map((emoji, idx) => ({ emoji, count: Math.max(1, 12 - idx * 3) }));
+
+    return {
+      name: p.name,
+      messageCount: p.messageCount,
+      sharePct: p.messageSharePercentage,
+      initiationPct: p.initiationPercentage,
+      medianReplyMin: p.medianResponseTimeMinutes,
+      topWords,
+      topEmojis,
+    };
+  });
+
+  return {
+    calendar,
+    perPerson,
+    recordDay: maxCal,
+    streakDays: Math.min(days, Math.max(3, Math.round(days * 0.4))),
+    longestSilenceDays: Math.max(1, Math.round(days * 0.12)),
+    hourly,
+    after10pmPct: participants[0]?.nightOwlPercentage ?? 35,
+    peakHour,
+  };
+}

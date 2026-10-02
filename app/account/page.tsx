@@ -22,38 +22,80 @@ export default function AccountPage() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
+      // 1. Gather local reports from localStorage
+      const localReports: MyConversation[] = [];
       try {
-        const meRes = await fetch('/api/auth/me');
-        if (!meRes.ok) {
-          if (!cancelled) {
-            setEmail(null);
-            setAuthChecked(true);
-          }
-          return;
-        }
-        const meData = await meRes.json();
-        if (!cancelled) {
-          setEmail(meData.email ?? null);
-          setAuthChecked(true);
-        }
-        if (meRes.ok) {
-          try {
-            const rRes = await fetch('/api/conversations?mine=1');
-            if (rRes.ok) {
-              const rData = await rRes.json();
-              if (!cancelled) setReports(rData.conversations ?? []);
-            } else if (!cancelled) {
-              setReports([]);
+        const rawIdx = window.localStorage.getItem('brandon:reports_index');
+        if (rawIdx) {
+          const parsed = JSON.parse(rawIdx);
+          if (Array.isArray(parsed)) {
+            for (const item of parsed) {
+              if (item?.id) {
+                localReports.push({
+                  id: item.id,
+                  title: item.title || 'Conversation',
+                  category: item.category || 'romantic',
+                  createdAt: item.createdAt || new Date().toISOString(),
+                });
+              }
             }
-          } catch {
-            if (!cancelled) setReportsError('Could not load reports');
+          }
+        }
+        for (let i = 0; i < window.localStorage.length; i++) {
+          const k = window.localStorage.key(i);
+          if (k && (k.startsWith('brandon:conv:') || k.startsWith('frank:conv:'))) {
+            const convId = k.split(':').pop();
+            if (convId && !localReports.some((x) => x.id === convId)) {
+              try {
+                const convRaw = window.localStorage.getItem(k);
+                if (convRaw) {
+                  const parsed = JSON.parse(convRaw);
+                  const names = (parsed?.stats?.participants ?? []).map((p: { name: string }) => p.name).join(' & ');
+                  localReports.push({
+                    id: convId,
+                    title: names || parsed?.fileName || 'Conversation',
+                    category: parsed?.category || 'romantic',
+                    createdAt: parsed?.updatedAt || new Date().toISOString(),
+                  });
+                }
+              } catch {
+                // ignore item parse error
+              }
+            }
           }
         }
       } catch {
-        if (!cancelled) {
+        // ignore storage errors
+      }
+
+      // 2. Fetch server session and server reports
+      let serverReports: MyConversation[] = [];
+      try {
+        const meRes = await fetch('/api/auth/me');
+        if (meRes.ok) {
+          const meData = await meRes.json();
+          if (!cancelled) setEmail(meData.email ?? null);
+          const rRes = await fetch('/api/conversations?mine=1');
+          if (rRes.ok) {
+            const rData = await rRes.json();
+            serverReports = rData.conversations ?? [];
+          }
+        } else if (!cancelled) {
           setEmail(null);
-          setAuthChecked(true);
         }
+      } catch {
+        if (!cancelled) setEmail(null);
+      }
+
+      if (!cancelled) {
+        setAuthChecked(true);
+        // Merge and deduplicate by id
+        const map = new Map<string, MyConversation>();
+        for (const r of serverReports) map.set(r.id, r);
+        for (const r of localReports) {
+          if (!map.has(r.id)) map.set(r.id, r);
+        }
+        setReports(Array.from(map.values()));
       }
     }
     load();
@@ -68,13 +110,14 @@ export default function AccountPage() {
       const ids: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k?.startsWith('frank:conv:')) ids.push(k.slice('frank:conv:'.length));
+        if (k?.startsWith('brandon:conv:')) ids.push(k.slice('brandon:conv:'.length));
+        else if (k?.startsWith('frank:conv:')) ids.push(k.slice('frank:conv:'.length));
       }
       await Promise.all(
         ids.map((id) => {
           let deleteToken: string | null = null;
           try {
-            const raw = localStorage.getItem(`frank:conv:${id}`);
+            const raw = localStorage.getItem(`brandon:conv:${id}`) || localStorage.getItem(`frank:conv:${id}`);
             if (raw) {
               const parsed = JSON.parse(raw);
               if (typeof parsed?.deleteToken === 'string') deleteToken = parsed.deleteToken;
@@ -88,7 +131,11 @@ export default function AccountPage() {
           }).catch(() => null);
         })
       );
-      ids.forEach((id) => localStorage.removeItem(`frank:conv:${id}`));
+      ids.forEach((id) => {
+        localStorage.removeItem(`brandon:conv:${id}`);
+        localStorage.removeItem(`frank:conv:${id}`);
+      });
+      localStorage.removeItem('brandon:reports_index');
       setReports([]);
     } finally {
       setDeleted(true);
@@ -98,7 +145,6 @@ export default function AccountPage() {
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
     setEmail(null);
-    setReports([]);
   };
 
   return (
@@ -166,30 +212,42 @@ export default function AccountPage() {
                 </div>
                 {!authChecked ? (
                   <p className="text-xs text-muted-foreground">Loading…</p>
-                ) : !email ? (
-                  <p className="text-xs text-muted-foreground">
-                    <Link href="/login" className="text-primary hover:underline font-medium">
-                      Sign in
-                    </Link>{' '}
-                    to see your reports.
-                  </p>
                 ) : reportsError ? (
                   <p className="text-xs text-destructive">{reportsError}</p>
                 ) : reports.length === 0 ? (
                   <div className="flex flex-col gap-3">
                     <p className="text-xs text-muted-foreground">
-                      No reports yet.
+                      No reports yet on this device.
                     </p>
-                    <Link
+                    <div className="flex items-center gap-3">
+                      <Link
                         href="/setup"
-                      className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-xs font-medium text-primary-foreground shadow-xs transition-all hover:bg-primary/90"
-                    >
-                      <span>Analyze a chat</span>
-                      <ArrowRight className="size-3.5" />
-                    </Link>
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-xs font-medium text-primary-foreground shadow-xs transition-all hover:bg-primary/90"
+                      >
+                        <span>Analyze a chat</span>
+                        <ArrowRight className="size-3.5" />
+                      </Link>
+                      {!email && (
+                        <Link
+                          href="/login"
+                          className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-border px-4 text-xs font-medium text-foreground hover:bg-accent transition-colors"
+                        >
+                          Sign in
+                        </Link>
+                      )}
+                    </div>
                   </div>
                 ) : (
-                  <ul className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-3">
+                    {!email && (
+                      <div className="flex items-center justify-between rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground">
+                        <span>These reports are saved on this browser.</span>
+                        <Link href="/login" className="font-semibold text-primary hover:underline">
+                          Sign in to sync →
+                        </Link>
+                      </div>
+                    )}
+                    <ul className="flex flex-col gap-2">
                     {reports.map((r) => (
                       <li key={r.id}>
                         <Link
@@ -207,6 +265,7 @@ export default function AccountPage() {
                       </li>
                     ))}
                   </ul>
+                  </div>
                 )}
               </div>
 
@@ -217,7 +276,7 @@ export default function AccountPage() {
                   <h3 className="font-serif text-lg font-medium">Privacy & Purge Controls</h3>
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Permanently erase all chat transcripts, forensic calculations, and reports immediately. This action cannot be reversed.
+                  Permanently erase all chat transcripts, statistics, and reports immediately. This action cannot be reversed.
                 </p>
                 <button
                   type="button"

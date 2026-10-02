@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Sparkles, ArrowRight, Check, BookOpen, Lock, ShieldCheck, Zap } from 'lucide-react';
@@ -8,14 +9,20 @@ import { useChatStore } from '@/lib/store/useChatStore';
 
 export default function ReportPreviewPage() {
   const router = useRouter();
-  const { preview } = useChatStore();
+  const { preview, conversationId } = useChatStore();
+
+  useEffect(() => {
+    if (conversationId) {
+      router.replace(`/c/${conversationId}/reports/1`);
+    }
+  }, [conversationId, router]);
 
   if (!preview) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center p-6 text-center">
         <h2 className="font-serif text-2xl font-medium">No active report preview found</h2>
         <p className="text-xs text-muted-foreground mt-2 max-w-sm">
-          Upload a chat first to see Frank&apos;s forensic preview.
+          Upload a chat first to see Brandon&apos;s preview.
         </p>
         <Link
           href="/setup"
@@ -51,14 +58,13 @@ export default function ReportPreviewPage() {
           <div className="flex flex-wrap items-center justify-between gap-2.5">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-100 px-3.5 py-1 text-xs font-medium text-amber-950">
               <Sparkles className="size-3 text-amber-600 shrink-0" />
-              <span>Forensic Dossier Ready</span>
+              <span>Brandon&apos;s Report Ready</span>
             </span>
 
             <div className="flex items-center gap-2">
-              <span className="text-xs font-mono text-muted-foreground">Brutality Rating:</span>
-              <span className="inline-flex items-center gap-1 rounded-md bg-[#FFD9E2] px-2.5 py-0.5 text-xs font-mono font-bold text-[#5E1A2A]">
-                <Zap className="size-3 shrink-0 text-rose-600" />
-                {preview.brutalityScore} / 10
+              <span className="text-xs font-mono text-muted-foreground">Access:</span>
+              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2.5 py-0.5 text-xs font-mono font-bold text-emerald-900">
+                100% Free
               </span>
             </div>
           </div>
@@ -83,7 +89,7 @@ export default function ReportPreviewPage() {
             <div className="flex items-center gap-2 border-b border-border pb-3">
               <Sparkles className="size-4 text-amber-500 shrink-0" />
               <h2 className="font-serif text-lg sm:text-xl font-medium text-foreground">
-                Frank&apos;s Initial Assessment
+                Brandon&apos;s Initial Assessment
               </h2>
             </div>
             <p className="font-serif text-sm sm:text-base leading-relaxed sm:leading-loose text-foreground/90 whitespace-pre-line">
@@ -113,11 +119,11 @@ export default function ReportPreviewPage() {
               <div className="flex items-center gap-2">
                 <Lock className="size-4 text-primary shrink-0" />
                 <h3 className="font-serif text-base sm:text-lg font-medium text-foreground">
-                  Dossier Sections ({lockedSectionsList.length} In-Depth Audits)
+                  Full Report Sections ({lockedSectionsList.length} Chapters)
                 </h3>
               </div>
               <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground bg-muted px-2.5 py-0.5 rounded">
-                Preview
+                Unlocking Free
               </span>
             </div>
 
@@ -129,7 +135,7 @@ export default function ReportPreviewPage() {
                   className="flex flex-col gap-2 rounded-xl border border-border/80 bg-muted/30 p-3.5"
                 >
                   <div className="flex items-center gap-2">
-                    <Lock className="size-3.5 text-muted-foreground shrink-0" />
+                    <BookOpen className="size-3.5 text-muted-foreground shrink-0" />
                     <span className="font-serif text-xs sm:text-sm font-medium text-foreground truncate">
                       {sectionTitle}
                     </span>
@@ -147,25 +153,31 @@ export default function ReportPreviewPage() {
               <div className="flex flex-col items-center gap-3.5 max-w-md w-full">
                 <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-100 px-3.5 py-1 text-xs font-semibold text-emerald-950">
                   <ShieldCheck className="size-3.5 text-emerald-600 shrink-0" />
-                  <span>100% Free Dossier • No Paywall</span>
+                  <span>100% Free Report • No Paywall</span>
                 </div>
 
                 <div className="flex flex-col gap-1">
                   <h3 className="font-serif text-xl sm:text-2xl font-medium tracking-tight text-foreground">
-                    Unlock the Complete Forensic Dossier
+                    Read Brandon&apos;s Full Report
                   </h3>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    View all 12 forensic sections including turning point timestamp evidence, power ratio analysis, participant scorecards, and Frank&apos;s tactical text recommendations.
+                    View all sections including the grand metaphor, real-time reactions with WhatsApp quotes, participant portraits, Yelp review, and Brandon&apos;s practical advice.
                   </p>
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => router.push('/chat/report/full')}
+                  onClick={() => {
+                    if (conversationId) {
+                      router.push(`/c/${conversationId}/reports/1`);
+                    } else {
+                      router.push('/chat/report/full');
+                    }
+                  }}
                   className="group inline-flex w-full sm:w-auto min-h-[48px] items-center justify-center gap-2 rounded-xl bg-primary px-8 text-sm font-medium text-primary-foreground shadow-md transition-all hover:bg-primary/90 active:scale-[0.98] cursor-pointer"
                 >
                   <BookOpen className="size-4 shrink-0" />
-                  <span>View Full Report</span>
+                  <span>View Full Report (Free)</span>
                   <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" />
                 </button>
 

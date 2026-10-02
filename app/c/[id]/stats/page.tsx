@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { SiteHeader, SiteFooter } from '@/components/brandon/header';
 import { useChatStore } from '@/lib/store/useChatStore';
-import { computeDetailedStats } from '@/lib/forensics/detailed-stats';
+import { computeDetailedStats, synthesizeDetailedStats } from '@/lib/forensics/detailed-stats';
 
 const MONTH_LABELS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
 
@@ -20,7 +20,7 @@ function formatHour(h: number): string {
 export default function ConversationStatsPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? '';
-  const { stats, parsedMessages, loadFromLocal } = useChatStore();
+  const { stats, detailedStats, parsedMessages, loadFromLocal } = useChatStore();
   const [status, setStatus] = useState<'loading' | 'found' | 'missing'>('loading');
 
   useEffect(() => {
@@ -64,7 +64,9 @@ export default function ConversationStatsPage() {
             st.setUploadedChat(data.conversation.fileName, '');
           }
           if (data?.stats) {
-            st.setParsedData([], data.stats, data?.turningPoint ?? null);
+            st.setParsedData([], data.stats, data?.turningPoint ?? null, data?.detailedStats ?? null);
+          } else if (data?.detailedStats) {
+            st.setDetailedStats(data.detailedStats);
           }
           if (data?.preview) {
             st.setPreview(data.preview);
@@ -75,7 +77,7 @@ export default function ConversationStatsPage() {
         } catch {
           // fall through to status check below
         }
-        setStatus(data?.stats || data?.preview || data?.fullReport ? 'found' : 'missing');
+        setStatus(data?.stats || data?.detailedStats || data?.preview || data?.fullReport ? 'found' : 'missing');
       })
       .catch(() => {
         if (!cancelled) setStatus('missing');
@@ -87,9 +89,19 @@ export default function ConversationStatsPage() {
   }, [id]);
 
   const detailed = useMemo(() => {
-    if (!stats || parsedMessages.length === 0) return null;
-    return computeDetailedStats(parsedMessages, stats);
-  }, [parsedMessages, stats]);
+    if (detailedStats) return detailedStats;
+    if (stats && parsedMessages.length > 0) {
+      try {
+        return computeDetailedStats(parsedMessages, stats);
+      } catch {
+        return synthesizeDetailedStats(stats);
+      }
+    }
+    if (stats) {
+      return synthesizeDetailedStats(stats);
+    }
+    return null;
+  }, [detailedStats, parsedMessages, stats]);
 
   const dayCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -151,7 +163,15 @@ export default function ConversationStatsPage() {
             <span>Back to conversation</span>
           </Link>
           <h1 className="font-serif text-3xl font-medium tracking-tight sm:text-4xl">{title}</h1>
-          <p className="text-xs text-muted-foreground">No data yet.</p>
+          <p className="text-sm text-muted-foreground">
+            Forensic stats are being synchronized. You can read Brandon&apos;s full report right now.
+          </p>
+          <Link
+            href={`/c/${id}/reports/1`}
+            className="inline-flex h-11 w-fit items-center justify-center rounded-xl bg-primary px-6 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            Read Brandon&apos;s Report &rarr;
+          </Link>
         </main>
         <SiteFooter />
       </div>

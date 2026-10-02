@@ -76,10 +76,10 @@ export async function POST(req: NextRequest) {
       try {
         const resend = new Resend(resendKey);
         await resend.emails.send({
-          from: 'Frank <login@whatfrankthinks.com>',
+          from: 'Brandon <login@whatbrandonthinks.com>',
           to: email,
-          subject: `${code} is your What Frank Thinks sign-in code`,
-          text: `Your sign-in code for What Frank Thinks is ${code}. It expires in 15 minutes.`,
+          subject: `${code} is your What Brandon Thinks sign-in code`,
+          text: `Your sign-in code for What Brandon Thinks is ${code}. It expires in 15 minutes.`,
         });
       } catch (sendErr) {
         console.error('Resend send error (code already stored):', sendErr);

@@ -37,11 +37,11 @@ export function HeroCluster({ className = '' }: HeroClusterProps = {}) {
         💔
       </span>
 
-      {/* 4. Center Frank Avatar */}
-      <span className="relative z-10 flex size-12 min-[380px]:size-14 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-[#18181b] bg-[#ffd36e] shadow-md ring-2 ring-background sm:size-[4.5rem] sm:border-[3px] md:size-[4.75rem]">
+      {/* 4. Center Brandon Avatar */}
+      <span className="relative z-10 flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-full border-[3px] border-[#18181b] bg-[#ffd36e] shadow-md sm:size-[4.5rem]">
         <Image
           src="/images/brandon/avatar.webp"
-          alt="Frank"
+          alt="Brandon"
           width={112}
           height={112}
           className="size-full object-cover"

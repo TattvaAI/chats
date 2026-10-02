@@ -4,47 +4,39 @@ import Image from 'next/image';
 export function SiteHeader() {
   return (
     <header className="sticky top-0 z-50 w-full border-b border-[var(--header-border)] bg-[var(--header-bg)] backdrop-blur-md pt-[env(safe-area-inset-top)] text-foreground transition-colors duration-300">
-      <div className="mx-auto flex h-[var(--app-header-row-height)] w-full max-w-6xl items-center justify-between px-4 sm:px-6">
+      <div className="mx-auto flex h-[var(--app-header-row-height)] w-full items-center justify-between px-4 sm:px-6">
         <Link
           href="/"
-          className="flex items-center gap-2.5 transition-opacity hover:opacity-85"
+          className="flex items-center gap-2 transition-opacity hover:opacity-80"
         >
           <span className="relative block size-8 sm:size-9 overflow-hidden rounded-full ring-2 ring-black/5">
             <Image
               src="/images/brandon/avatar.webp"
-              alt="Frank"
+              alt="Brandon"
               width={40}
               height={40}
               className="size-full object-cover"
               priority
             />
           </span>
-          <span className="font-serif text-2xl font-medium tracking-tight text-foreground sm:text-3xl">
-            Frank
+          <span className="font-serif text-2xl leading-none tracking-tight sm:text-3xl">
+            Brandon
           </span>
         </Link>
 
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <div className="flex size-8 sm:size-9 items-center justify-center rounded-lg bg-emerald-500/10 p-1">
-              <Image
-                src="/icons/whatsapp.svg"
-                alt="WhatsApp"
-                width={28}
-                height={28}
-                className="size-6 sm:size-7"
-              />
-            </div>
-            <div className="flex size-8 sm:size-9 items-center justify-center rounded-lg bg-blue-500/10 p-1">
-              <Image
-                src="/icons/imessage.svg"
-                alt="iMessage"
-                width={28}
-                height={28}
-                className="size-6 sm:size-7"
-              />
-            </div>
-          </div>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <Link
+            href="/account"
+            className="text-xs sm:text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded-lg hover:bg-black/5"
+          >
+            My Reports
+          </Link>
+          <Link
+            href="/setup"
+            className="inline-flex h-9 items-center justify-center rounded-xl bg-neutral-900 px-3.5 sm:px-4 text-xs font-medium text-white shadow-2xs hover:bg-neutral-800 active:scale-95 transition-all"
+          >
+            Analyze a chat
+          </Link>
         </div>
       </div>
     </header>
@@ -53,23 +45,34 @@ export function SiteHeader() {
 
 export function SiteFooter() {
   return (
-    <footer className="w-full border-t border-border bg-card py-12 text-sm text-muted-foreground">
-      <div className="mx-auto flex w-full max-w-6xl flex-col items-center gap-8 px-6 text-center sm:px-10">
-        <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 font-medium text-foreground/80">
-          <Link href="/" className="hover:text-foreground">Home</Link>
-          <Link href="/account" className="hover:text-foreground">Account</Link>
-          <Link href="/faq" className="hover:text-foreground">FAQ</Link>
-          <Link href="/support" className="hover:text-foreground">Customer Support</Link>
-          <Link href="/relationship" className="hover:text-foreground">Relationship chats</Link>
-          <Link href="/friends" className="hover:text-foreground">Friend & group chats</Link>
-          <Link href="/family" className="hover:text-foreground">Family chats</Link>
-          <Link href="/imessage" className="hover:text-foreground">iMessage chats</Link>
-          <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
-          <Link href="/terms" className="hover:text-foreground">Terms</Link>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          © 2026 What Frank Thinks. All rights reserved. Built for conversational insight and relationship forensics.
-        </p>
+    <footer className="border-t border-border bg-white pb-[env(safe-area-inset-bottom)] text-foreground">
+      <div className="flex w-full flex-col items-start gap-6 px-4 py-14 sm:px-6 sm:py-16">
+        <Link
+          href="/"
+          className="flex items-center gap-2 transition-opacity hover:opacity-80"
+        >
+          <Image
+            src="/images/brandon/avatar.webp"
+            alt="Brandon"
+            width={28}
+            height={28}
+            className="size-7 rounded-full object-cover"
+          />
+          <span className="text-sm font-medium">© 2026 What Brandon Thinks</span>
+        </Link>
+        <nav className="flex flex-wrap items-center gap-x-5 text-sm text-muted-foreground">
+          <Link href="/" className="inline-flex min-h-11 items-center underline-offset-2 transition-colors hover:text-foreground hover:underline">Home</Link>
+          <Link href="/account" className="inline-flex min-h-11 items-center underline-offset-2 transition-colors hover:text-foreground hover:underline">Account</Link>
+          <Link href="/faq" className="inline-flex min-h-11 items-center underline-offset-2 transition-colors hover:text-foreground hover:underline">FAQ</Link>
+          <Link href="/support" className="inline-flex min-h-11 items-center underline-offset-2 transition-colors hover:text-foreground hover:underline">Customer Support</Link>
+          <Link href="/feedback" className="inline-flex min-h-11 items-center underline-offset-2 transition-colors hover:text-foreground hover:underline">Feedback</Link>
+          <Link href="/relationship" className="inline-flex min-h-11 items-center underline-offset-2 transition-colors hover:text-foreground hover:underline">Relationship chats</Link>
+          <Link href="/friends" className="inline-flex min-h-11 items-center underline-offset-2 transition-colors hover:text-foreground hover:underline">Friend &amp; group chats</Link>
+          <Link href="/family" className="inline-flex min-h-11 items-center underline-offset-2 transition-colors hover:text-foreground hover:underline">Family chats</Link>
+          <Link href="/imessage" className="inline-flex min-h-11 items-center underline-offset-2 transition-colors hover:text-foreground hover:underline">iMessage chats</Link>
+          <Link href="/privacy" className="inline-flex min-h-11 items-center underline-offset-2 transition-colors hover:text-foreground hover:underline">Privacy</Link>
+          <Link href="/terms" className="inline-flex min-h-11 items-center underline-offset-2 transition-colors hover:text-foreground hover:underline">Terms</Link>
+        </nav>
       </div>
     </footer>
   );

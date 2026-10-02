@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -113,24 +114,40 @@ const CATEGORIES: CategoryOption[] = [
   },
 ];
 
+const DEMO_PHASES = [
+  'Reading your messages…',
+  'Decoding the inside jokes…',
+  'Ranking everyone\'s texting habits…',
+  'Counting who double-texts the most…',
+  'Auditing the voice note situation…',
+  'Judging the emoji choices… respectfully…',
+  'Detecting passive-aggressive "ok" replies…',
+  'Finding who only shows up for the gossip…',
+  'Measuring main-character energy…',
+  'Tallying the plans that never happened…',
+  'Reading between the lines…',
+  'Almost there, double-checking the receipts…',
+  'Polishing your report…',
+];
+
 const LANGUAGES: { id: ReportLanguage; label: string; flag: string; desc: string }[] = [
   {
     id: 'en',
     label: 'English',
     flag: '🇬🇧',
-    desc: "Frank's signature raw, razor-sharp forensic prose and psychological breakdown.",
+    desc: "Brandon's unfiltered opinions, razor-sharp wit, and psychological breakdown.",
   },
   {
     id: 'fr',
     label: 'Français',
     flag: '🇫🇷',
-    desc: 'Analyse médico-légale incisive, esprit mordant et vérités sans complaisance.',
+    desc: 'Analyse incisive, esprit mordant et vérités sans complaisance par Brandon.',
   },
   {
     id: 'es',
     label: 'Español',
     flag: '🇪🇸',
-    desc: 'Auditoría forense implacable, sátira afilada y diagnóstico directo sin filtros.',
+    desc: 'Análisis implacable, sátira afilada y diagnóstico directo sin filtros por Brandon.',
   },
 ];
 
@@ -198,6 +215,25 @@ export default function SetupFunnel() {
   // S7 email input & validation state
   const [inputEmail, setInputEmail] = useState<string>(email || '');
   const [emailError, setEmailError] = useState<string>('');
+  const [phaseIdx, setPhaseIdx] = useState<number>(0);
+
+  // Background analysis state & refs to pre-warm report while user browses numbers
+  const backgroundAnalysisRef = useRef<Promise<unknown> | null>(null);
+  const backgroundParamsRef = useRef<{
+    category: string;
+    reportLanguage: string;
+    userNote?: string;
+    myName?: string;
+  } | null>(null);
+  const [bgStatus, setBgStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
+
+  useEffect(() => {
+    if (!isProcessing) return;
+    const interval = setInterval(() => {
+      setPhaseIdx((prev) => (prev + 1) % DEMO_PHASES.length);
+    }, 1300);
+    return () => clearInterval(interval);
+  }, [isProcessing]);
 
   // Keep rawParsedMessagesRef in sync when parsedMessages is initially loaded.
   // Ref is read here inside the effect (not during render); state sync is
@@ -235,6 +271,101 @@ export default function SetupFunnel() {
     }
   }, [rawSenders, nameMap]);
 
+  // Trigger analysis in the background
+  const triggerAnalysis = (
+    customParsed?: ParsedMessage[],
+    customStats?: typeof stats,
+    customTurningPoint?: typeof turningPoint,
+    overrideParams?: { myName?: string; userNote?: string; reportLanguage?: ReportLanguage; email?: string }
+  ) => {
+    const activeMsgs =
+      customParsed ||
+      (rawParsedMessagesRef.current.length > 0 ? rawParsedMessagesRef.current : parsedMessages);
+    const activeStats = customStats || stats;
+    const activeTurningPoint =
+      customTurningPoint !== undefined ? customTurningPoint : turningPoint;
+
+    if (!activeMsgs || activeMsgs.length === 0 || !activeStats) return null;
+
+    // Build transcript sample
+    let transcriptSample = '';
+    if (activeMsgs.length <= 70) {
+      transcriptSample = activeMsgs.map((m) => `${m.sender}: ${m.content}`).join('\n');
+    } else {
+      const first50 = activeMsgs.slice(0, 50).map((m) => `${m.sender}: ${m.content}`).join('\n');
+      const last20 = activeMsgs.slice(-20).map((m) => `${m.sender}: ${m.content}`).join('\n');
+      transcriptSample = `${first50}\n\n[... intermediate messages omitted ...]\n\n${last20}`;
+    }
+
+    const messages = activeMsgs.map((m) => ({
+      sender: m.sender,
+      content: m.content,
+      at: new Date(m.timestamp).toISOString(),
+    }));
+
+    const conversationId = ensureReportIdentity();
+    const chosenLang = overrideParams?.reportLanguage || reportLanguage;
+    const chosenMyName = overrideParams?.myName || selectedMyName || myName;
+    let combinedNote =
+      overrideParams?.userNote !== undefined ? overrideParams.userNote : userNote;
+    if (chosenMyName && !combinedNote.includes(chosenMyName)) {
+      combinedNote = `[Context: The user requesting this analysis is "${chosenMyName}"].\n\n${combinedNote}`.trim();
+    }
+
+    backgroundParamsRef.current = {
+      category,
+      reportLanguage: chosenLang,
+      userNote: combinedNote,
+      myName: chosenMyName,
+    };
+
+    setBgStatus('running');
+
+    const userEmailToPass =
+      overrideParams?.email || inputEmail.trim() || email || undefined;
+    const currentDetailedStats = useChatStore.getState().detailedStats;
+
+    const promise = fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category,
+        stats: activeStats,
+        detailedStats: currentDetailedStats || undefined,
+        turningPoint: activeTurningPoint,
+        transcriptSample,
+        messages,
+        userNote: combinedNote,
+        reportLanguage: chosenLang,
+        conversationId,
+        source,
+        myName: chosenMyName || undefined,
+        email: userEmailToPass,
+      }),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('Failed to analyze');
+        const data = await res.json();
+        setPreview(data.preview);
+        setFullReport(data.fullReport);
+        setAiLive(typeof data?.aiLive === 'boolean' ? data.aiLive : false);
+        if (typeof data?.deleteToken === 'string') {
+          setDeleteToken(data.deleteToken);
+        }
+        persistToLocal();
+        setBgStatus('completed');
+        return data;
+      })
+      .catch((err) => {
+        console.warn('[SetupFunnel] background analysis encountered error:', err);
+        setBgStatus('failed');
+        throw err;
+      });
+
+    backgroundAnalysisRef.current = promise;
+    return promise;
+  };
+
   // S3: Process file content
   const handleProcessFileContent = (rawContent: string, uploadFileName: string) => {
     setErrorMsg('');
@@ -243,7 +374,7 @@ export default function SetupFunnel() {
 
     // Guard: < 5 reject
     if (parsed.messages.length < 5) {
-      setErrorMsg('Chat has fewer than 5 messages. Minimum 5 messages required for forensic audit.');
+      setErrorMsg('Chat has fewer than 5 messages. Brandon needs at least 5 messages to give an opinion.');
       return;
     }
 
@@ -260,10 +391,23 @@ export default function SetupFunnel() {
 
     // Store raw original messages in ref BEFORE any participant renaming occurs
     rawParsedMessagesRef.current = parsed.messages;
-    setRawSenders(getSenders(parsed.messages));
+    const senders = getSenders(parsed.messages);
+    setRawSenders(senders);
+    const defaultName = senders[0] || '';
+    if (!selectedMyName) {
+      setSelectedMyName(defaultName);
+    }
 
     setUploadedChat(uploadFileName, rawContent);
     setParsedData(parsed.messages, calculatedStats, calculatedTurningPoint);
+
+    // Kick off background analysis immediately as the user uploads!
+    triggerAnalysis(parsed.messages, calculatedStats, calculatedTurningPoint, { myName: defaultName });
+
+    // Smoothly transition to Step 4 so user can read numbers right away while analysis runs!
+    setTimeout(() => {
+      setCurrentStep(4);
+    }, 250);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -344,95 +488,70 @@ export default function SetupFunnel() {
       setIsProcessing(true);
       setErrorMsg('');
 
-      // Stage 1: Ingestion
-      setScanProgress(15, 'Reading your messages...');
-      await new Promise((r) => setTimeout(r, 400));
-
-      // Stage 2: Forensic Metrics
-      setScanProgress(45, 'Checking who writes first and who waits...');
-      await new Promise((r) => setTimeout(r, 500));
-
-      // Stage 3: AI Forensic Processing
-      setScanProgress(75, 'Frank is reading every message...');
-
-      // Transcript: first 50 + last 20
-      let transcriptSample = '';
-      if (parsedMessages.length <= 70) {
-        transcriptSample = parsedMessages
-          .map((m) => `${m.sender}: ${m.content}`)
-          .join('\n');
-      } else {
-        const first50 = parsedMessages
-          .slice(0, 50)
-          .map((m) => `${m.sender}: ${m.content}`)
-          .join('\n');
-        const last20 = parsedMessages
-          .slice(-20)
-          .map((m) => `${m.sender}: ${m.content}`)
-          .join('\n');
-        transcriptSample = `${first50}\n\n[... intermediate messages omitted ...]\n\n${last20}`;
-      }
-
-      const messages = parsedMessages.map((m) => ({
-        sender: m.sender,
-        content: m.content,
-        at: new Date(m.timestamp).toISOString(),
-      }));
-
       const conversationId = ensureReportIdentity();
-
-      // Include myName context in userNote if present
-      let combinedNote = userNote;
-      if (myName && !combinedNote.includes(myName)) {
-        combinedNote = `[Auditor context: The user requesting this analysis is "${myName}"].\n\n${userNote}`.trim();
-      }
-
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          category,
-          stats,
-          turningPoint,
-          transcriptSample,
-          messages,
-          userNote: combinedNote,
-          reportLanguage,
-          conversationId,
-          source,
-          myName: myName || undefined,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to complete conversational analysis.');
-      }
-
-      const data = await response.json();
-
-      setPreview(data.preview);
-      setFullReport(data.fullReport);
-      const aiLive = typeof data?.aiLive === 'boolean' ? data.aiLive : false;
-      setAiLive(aiLive);
-      if (typeof data?.deleteToken === 'string') {
-        setDeleteToken(data.deleteToken);
-      }
-
-      persistToLocal();
-
-      setScanProgress(100, 'Dossier ready!');
-      await new Promise((r) => setTimeout(r, 300));
-
-      let hubPath = `/c/${conversationId}`;
+      let reportPath = `/c/${conversationId}/reports/1`;
       try {
         const meRes = await fetch('/api/auth/me');
         if (!meRes.ok && trimmedEmail) {
-          hubPath = `/c/${conversationId}?welcome=1`;
+          reportPath = `/c/${conversationId}/reports/1?welcome=1`;
         }
       } catch {
-        if (trimmedEmail) hubPath = `/c/${conversationId}?welcome=1`;
+        if (trimmedEmail) reportPath = `/c/${conversationId}/reports/1?welcome=1`;
       }
-      router.push(hubPath);
+
+      // Send email containing report link to user's provided email address
+      if (trimmedEmail) {
+        fetch('/api/send-report-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: trimmedEmail,
+            conversationId,
+            host: typeof window !== 'undefined' ? window.location.host : undefined,
+          }),
+        }).catch((err) => console.warn('[SetupFunnel] Email send error:', err));
+      }
+
+      // Check if background analysis has completed or is in-flight
+      const bgPromise = backgroundAnalysisRef.current;
+      const prevParams = backgroundParamsRef.current;
+      const currentChosenName = selectedMyName || myName;
+      const hasChangedParams =
+        prevParams &&
+        (prevParams.reportLanguage !== reportLanguage ||
+          (userNote && !prevParams.userNote?.includes(userNote)) ||
+          (currentChosenName && prevParams.myName !== currentChosenName));
+
+      // CASE 1: Pre-warming finished while user was reading numbers! (Instant 0s wait)
+      if (!hasChangedParams && bgStatus === 'completed' && useChatStore.getState().fullReport) {
+        setScanProgress(100, 'Report ready!');
+        await new Promise((r) => setTimeout(r, 200));
+        router.push(reportPath);
+        return;
+      }
+
+      // CASE 2: Pre-warming is still in flight (user quickly clicked through) -> wait for in-flight promise!
+      if (!hasChangedParams && bgPromise && bgStatus === 'running') {
+        setScanProgress(60, 'Brandon is polishing your report…');
+        await bgPromise;
+        setScanProgress(100, 'Report ready!');
+        await new Promise((r) => setTimeout(r, 200));
+        router.push(reportPath);
+        return;
+      }
+
+      // CASE 3: Parameters changed (e.g. language or custom userNote changed) or fresh trigger
+      setScanProgress(45, 'Brandon is reading your messages…');
+      await triggerAnalysis(undefined, undefined, undefined, {
+        myName: currentChosenName,
+        userNote,
+        reportLanguage,
+        email: trimmedEmail,
+      });
+
+      setScanProgress(100, 'Report ready!');
+      await new Promise((r) => setTimeout(r, 200));
+      router.push(reportPath);
     } catch (err: unknown) {
       console.error('Processing error:', err);
       setErrorMsg('An unexpected error occurred during chat analysis. Please check your file.');
@@ -495,7 +614,7 @@ export default function SetupFunnel() {
                   What kind of chat is this?
                 </h1>
                 <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
-                  Pick the one that fits best. It helps Frank understand who everyone is to each other.
+                  Pick the one that fits best. It helps Brandon understand who everyone is to each other.
                 </p>
               </div>
 
@@ -553,9 +672,13 @@ export default function SetupFunnel() {
                 {/* WhatsApp card */}
                 <button
                   type="button"
-                  onClick={() => setPendingSource('whatsapp')}
+                  onClick={() => {
+                    setSource('whatsapp');
+                    setPendingSource('whatsapp');
+                    setCurrentStep(3);
+                  }}
                   className={`flex items-start justify-between rounded-2xl border bg-white p-5 text-left cursor-pointer transition-all active:scale-[0.99] ${
-                    pendingSource === 'whatsapp'
+                    source === 'whatsapp'
                       ? 'border-neutral-900 ring-2 ring-neutral-900 shadow-sm'
                       : 'border-neutral-200 hover:border-neutral-400 hover:shadow-xs'
                   }`}
@@ -573,7 +696,7 @@ export default function SetupFunnel() {
                       </span>
                     </div>
                   </div>
-                  {pendingSource === 'whatsapp' && (
+                  {source === 'whatsapp' && (
                     <CheckCircle2 className="size-5 text-neutral-900 shrink-0 mt-0.5" />
                   )}
                 </button>
@@ -581,9 +704,13 @@ export default function SetupFunnel() {
                 {/* iMessage card */}
                 <button
                   type="button"
-                  onClick={() => setPendingSource('imessage')}
+                  onClick={() => {
+                    setSource('imessage');
+                    setPendingSource('imessage');
+                    setCurrentStep(3);
+                  }}
                   className={`flex items-start justify-between rounded-2xl border bg-white p-5 text-left cursor-pointer transition-all active:scale-[0.99] ${
-                    pendingSource === 'imessage'
+                    source === 'imessage'
                       ? 'border-neutral-900 ring-2 ring-neutral-900 shadow-sm'
                       : 'border-neutral-200 hover:border-neutral-400 hover:shadow-xs'
                   }`}
@@ -601,27 +728,9 @@ export default function SetupFunnel() {
                       </span>
                     </div>
                   </div>
-                  {pendingSource === 'imessage' && (
+                  {source === 'imessage' && (
                     <CheckCircle2 className="size-5 text-neutral-900 shrink-0 mt-0.5" />
                   )}
-                </button>
-              </div>
-
-              {/* Continue black pill (disabled until chosen) */}
-              <div className="flex items-center justify-end pt-3">
-                <button
-                  type="button"
-                  disabled={!pendingSource}
-                  onClick={() => {
-                    if (pendingSource) {
-                      setSource(pendingSource);
-                      setCurrentStep(3);
-                    }
-                  }}
-                  className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-900 text-white hover:bg-neutral-800 active:scale-[0.98] px-6 py-3 text-sm font-medium transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 cursor-pointer"
-                >
-                  <span>Continue</span>
-                  <ArrowRight className="size-4" />
                 </button>
               </div>
             </div>
@@ -678,19 +787,6 @@ export default function SetupFunnel() {
                     )}
                   </div>
 
-                  {/* Confidence copy */}
-                  <div className="rounded-xl bg-neutral-100 p-3.5 text-xs text-neutral-900 leading-relaxed dark:bg-neutral-800 dark:text-neutral-100">
-                    {parsedMessages.length >= 80 ? (
-                      <p>
-                        Great chat for a report: lots of back-and-forth, so Frank can see who starts, who waits, and when it changed.
-                      </p>
-                    ) : (
-                      <p>
-                        Short chat, but still workable. Longer chats give Frank more to go on.
-                      </p>
-                    )}
-                  </div>
-
                   {/* Change file action + Continue black pill */}
                   <div className="flex items-center justify-between pt-2 border-t border-border/40">
                     <button
@@ -710,7 +806,7 @@ export default function SetupFunnel() {
                     <button
                       type="button"
                       onClick={() => setCurrentStep(4)}
-                      className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-900 text-white hover:bg-neutral-800 active:scale-[0.98] px-6 py-3 text-sm font-medium transition-all shadow-sm dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 cursor-pointer"
+                      className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-900 text-white hover:bg-neutral-800 active:scale-[0.98] px-6 py-3 text-sm font-medium transition-all shadow-sm cursor-pointer"
                     >
                       <span>Continue</span>
                       <ArrowRight className="size-4" />
@@ -751,10 +847,10 @@ export default function SetupFunnel() {
                       }
                     }
                   }}
-                  className={`relative flex flex-col items-center justify-center gap-3.5 rounded-2xl border-2 border-dashed p-10 text-center transition-all ${
+                  className={`relative flex flex-col items-center justify-center gap-3.5 rounded-2xl border-2 border-dashed p-10 text-center transition-all bg-card ${
                     dragActive
-                      ? 'border-neutral-900 bg-neutral-100/50 dark:border-neutral-100 dark:bg-neutral-900/50'
-                      : 'border-border bg-card hover:border-neutral-400 dark:hover:border-neutral-600'
+                      ? 'border-neutral-900 bg-neutral-100/50'
+                      : 'border-border hover:border-neutral-400'
                   }`}
                 >
                   <div className="flex size-14 items-center justify-center rounded-full bg-muted text-muted-foreground">
@@ -776,30 +872,6 @@ export default function SetupFunnel() {
                   />
                 </div>
               )}
-
-              {/* Test with Sample Situationship Chat */}
-              {(!fileName || parsedMessages.length < 5) && (
-                <div className="flex flex-col items-center gap-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleProcessFileContent(SAMPLE_CHAT, 'clara-lucas-situationship.txt')
-                    }
-                    className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/60 px-5 py-2.5 text-xs font-medium text-foreground hover:bg-muted transition-all cursor-pointer shadow-2xs"
-                  >
-                    <Sparkles className="size-3.5 text-amber-600" />
-                    <span>Try with Situationship Sample Chat</span>
-                  </button>
-                </div>
-              )}
-
-              {/* Hint card */}
-              <div className="flex items-start gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-4 text-xs text-neutral-900 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100">
-                <Shield className="size-4 shrink-0 mt-0.5" />
-                <div className="flex flex-col gap-1 leading-relaxed">
-                  <span>Export without media. Your file never leaves this device until you create the report.</span>
-                </div>
-              </div>
             </div>
           )}
 
@@ -811,7 +883,7 @@ export default function SetupFunnel() {
                   Your numbers.
                 </h1>
                 <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
-                  What your chat looks like from the outside, before Frank reads a single message.
+                  What your chat looks like from the outside, before Brandon reads a single message.
                 </p>
               </div>
 
@@ -884,7 +956,7 @@ export default function SetupFunnel() {
                 <button
                   type="button"
                   onClick={() => setCurrentStep(5)}
-                  className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-900 text-white hover:bg-neutral-800 active:scale-[0.98] px-6 py-3 text-sm font-medium transition-all shadow-sm dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 cursor-pointer"
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-900 text-white hover:bg-neutral-800 active:scale-[0.98] px-6 py-3 text-sm font-medium transition-all shadow-sm cursor-pointer"
                 >
                   <span>Continue</span>
                   <ArrowRight className="size-4" />
@@ -901,7 +973,7 @@ export default function SetupFunnel() {
                   Who is who in this chat?
                 </h1>
                 <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
-                  Tell Frank which person is you, and give each participant a clean first name so your dossier reads naturally.
+                  Tell Brandon which person is you, and give each participant a clean first name so your report reads naturally.
                 </p>
               </div>
 
@@ -921,14 +993,14 @@ export default function SetupFunnel() {
                         onClick={() => setSelectedMyName(sender)}
                         className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-medium cursor-pointer transition-all active:scale-[0.98] ${
                           isYou
-                            ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 shadow-xs'
-                            : 'border border-border bg-muted/50 text-foreground hover:bg-muted'
+                            ? 'bg-neutral-900 text-white shadow-xs'
+                            : 'border border-neutral-200 bg-white text-neutral-900 hover:border-neutral-400'
                         }`}
                       >
                         <User className="size-3.5" />
                         <span>{displayName}</span>
                         {isYou && (
-                          <span className="rounded-full bg-white/20 dark:bg-neutral-900/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider">
+                          <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider">
                             You
                           </span>
                         )}
@@ -983,7 +1055,7 @@ export default function SetupFunnel() {
                               }))
                             }
                             placeholder="Clean name (e.g. Sarah)"
-                            className="flex-1 rounded-xl border border-border bg-background px-3.5 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-neutral-900 dark:focus:border-neutral-100 focus:outline-hidden"
+                            className="flex-1 rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-neutral-900 focus:outline-hidden"
                           />
                         </div>
                       </div>
@@ -997,7 +1069,7 @@ export default function SetupFunnel() {
                 <button
                   type="button"
                   onClick={handleApplyRenameAndContinue}
-                  className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-900 text-white hover:bg-neutral-800 active:scale-[0.98] px-6 py-3 text-sm font-medium transition-all shadow-sm dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 cursor-pointer"
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-900 text-white hover:bg-neutral-800 active:scale-[0.98] px-6 py-3 text-sm font-medium transition-all shadow-sm cursor-pointer"
                 >
                   <span>Apply &amp; Continue</span>
                   <ArrowRight className="size-4" />
@@ -1011,7 +1083,7 @@ export default function SetupFunnel() {
             <div className="flex flex-col gap-6 animate-in fade-in duration-200">
               <div className="flex flex-col gap-2">
                 <h1 className="font-serif text-3xl sm:text-4xl font-bold tracking-tight text-foreground leading-[1.15]">
-                  Anything Frank should know?
+                  Anything Brandon should know?
                 </h1>
                 <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
                   Add anything you noticed, and pick what language the report is in.
@@ -1021,14 +1093,14 @@ export default function SetupFunnel() {
               {/* Note Section */}
               <div className="flex flex-col gap-2.5">
                 <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  What should Frank look at? (Optional)
+                  What should Brandon look at? (Optional)
                 </label>
                 <textarea
                   value={userNote}
                   onChange={(e) => setUserNote(e.target.value)}
                   placeholder="e.g., We talked non-stop for 2 months, but after their birthday party, reply times jumped to 18 hours. Did they pull away or am I being paranoid?"
                   rows={4}
-                  className="w-full rounded-2xl border border-border bg-card p-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-neutral-900 dark:focus:border-neutral-100 focus:outline-hidden leading-relaxed"
+                  className="w-full rounded-2xl border border-neutral-200 bg-white p-4 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-900 focus:outline-hidden leading-relaxed shadow-2xs"
                 />
               </div>
 
@@ -1045,23 +1117,23 @@ export default function SetupFunnel() {
                         key={lang.id}
                         type="button"
                         onClick={() => setReportLanguage(lang.id)}
-                        className={`flex items-start gap-4 rounded-2xl border p-4 text-left cursor-pointer transition-all active:scale-[0.98] ${
+                        className={`flex items-start gap-4 rounded-2xl border p-4 text-left cursor-pointer transition-all active:scale-[0.98] bg-white ${
                           isSelected
-                            ? 'border-neutral-900 bg-neutral-100/50 dark:border-neutral-100 dark:bg-neutral-900/50 ring-1 ring-neutral-900 dark:ring-neutral-100'
-                            : 'border-border bg-card hover:bg-muted/40'
+                            ? 'border-neutral-900 ring-2 ring-neutral-900 shadow-sm'
+                            : 'border-neutral-200 hover:border-neutral-400 hover:shadow-2xs'
                         }`}
                       >
                         <span className="text-2xl select-none mt-0.5">{lang.flag}</span>
                         <div className="flex flex-1 flex-col gap-0.5">
                           <div className="flex items-center justify-between">
-                            <span className="font-semibold text-sm text-foreground">
+                            <span className="font-semibold text-sm text-neutral-900">
                               {lang.label}
                             </span>
                             {isSelected && (
-                              <CheckCircle2 className="size-4 text-neutral-900 dark:text-neutral-100" />
+                              <CheckCircle2 className="size-4 text-neutral-900" />
                             )}
                           </div>
-                          <span className="text-xs text-muted-foreground leading-snug">
+                          <span className="text-xs text-neutral-500 leading-snug">
                             {lang.desc}
                           </span>
                         </div>
@@ -1076,7 +1148,7 @@ export default function SetupFunnel() {
                 <button
                   type="button"
                   onClick={() => setCurrentStep(7)}
-                  className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-900 text-white hover:bg-neutral-800 active:scale-[0.98] px-6 py-3 text-sm font-medium transition-all shadow-sm dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 cursor-pointer"
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-900 text-white hover:bg-neutral-800 active:scale-[0.98] px-6 py-3 text-sm font-medium transition-all shadow-sm cursor-pointer"
                 >
                   <span>Continue to Final Step</span>
                   <ArrowRight className="size-4" />
@@ -1107,7 +1179,7 @@ export default function SetupFunnel() {
                   )}
 
                   {/* Email Input Box */}
-                  <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card p-5">
+                  <div className="flex flex-col gap-2 rounded-2xl border border-neutral-200 bg-white p-5 shadow-xs">
                     <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Your Email Address
                     </label>
@@ -1119,7 +1191,7 @@ export default function SetupFunnel() {
                         setEmailError('');
                       }}
                       placeholder="alex@example.com"
-                      className="rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-neutral-900 dark:focus:border-neutral-100 focus:outline-hidden"
+                      className="rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-900 focus:outline-hidden"
                     />
                     {emailError && (
                       <span className="text-xs font-medium text-destructive pt-1">
@@ -1131,26 +1203,13 @@ export default function SetupFunnel() {
                     </span>
                   </div>
 
-                  {/* Summary recap pill */}
-                  <div className="flex items-center justify-between rounded-xl bg-muted/40 p-4 text-xs text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="size-4 text-amber-600" />
-                      <span>
-                        Auditing {stats?.totalMessages.toLocaleString() || 'chat'} messages with Frank
-                      </span>
-                    </div>
-                    <span className="font-mono text-[11px] uppercase">
-                      {reportLanguage.toUpperCase()} · {category}
-                    </span>
-                  </div>
-
                   {/* Generate button */}
                   <div className="flex items-center justify-end pt-3">
                     <button
                       type="button"
                       onClick={handleStartAnalysis}
                       disabled={isProcessing}
-                      className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-900 text-white hover:bg-neutral-800 active:scale-[0.98] px-7 py-3.5 text-sm font-semibold transition-all shadow-md disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 cursor-pointer"
+                      className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-900 text-white hover:bg-neutral-800 active:scale-[0.98] px-7 py-3.5 text-sm font-semibold transition-all shadow-md disabled:opacity-50 cursor-pointer"
                     >
                       <Sparkles className="size-4" />
                       <span>Create report</span>
@@ -1159,31 +1218,36 @@ export default function SetupFunnel() {
                   </div>
                 </>
               ) : (
-                /* RADAR SCANNER ANIMATION DURING PROCESSING */
+                /* BRANDON LOADER ANIMATION DURING PROCESSING */
                 <div className="flex flex-col items-center justify-center gap-8 py-12 text-center animate-in fade-in duration-300">
-                  <div className="relative flex size-32 items-center justify-center rounded-full border border-border bg-muted/40 shadow-inner">
-                    <div className="absolute inset-0 rounded-full border-t-2 border-primary/60 radar-sweep" />
-                    <div className="absolute size-24 rounded-full border border-primary/20 pulse-ring" />
-                    <span className="font-serif text-2xl font-bold tracking-tight text-primary">
-                      Frank
+                  <div className="relative flex size-28 items-center justify-center">
+                    <div className="absolute inset-0 rounded-full border-2 border-primary/40 animate-ping opacity-25" />
+                    <span className="size-24 rounded-full overflow-hidden shadow-md ring-2 ring-primary/30">
+                      <Image
+                        src="/images/brandon/avatar.webp"
+                        alt="Brandon"
+                        width={96}
+                        height={96}
+                        className="size-full object-contain"
+                      />
                     </span>
                   </div>
 
                   <div className="flex flex-col items-center gap-2.5 max-w-sm">
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-mono font-medium text-primary">
                       <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
-                      {scanStage || 'Forensic Scan in Progress'}
+                      <span>{DEMO_PHASES[phaseIdx]}</span>
                     </span>
-                    <h2 className="font-serif text-xl sm:text-2xl font-bold">
-                      Frank is reading your chat...
+                    <h2 className="font-serif text-2xl font-bold">
+                      Brandon is reading your chat…
                     </h2>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      Reading who writes what, and when.
+                      Unfiltered truths, inside jokes, and who cares more.
                     </p>
                     <div className="w-full bg-muted rounded-full h-1.5 mt-4 overflow-hidden">
                       <div
                         className="bg-primary h-1.5 rounded-full transition-all duration-300"
-                        style={{ width: `${scanProgress || 15}%` }}
+                        style={{ width: `${Math.min(96, 20 + phaseIdx * 7)}%` }}
                       />
                     </div>
                   </div>
