@@ -68,6 +68,10 @@ FORMAT STRICTLY AS VALID JSON MATCHING THE SCHEMA.
 
 export const FRANK_SYSTEM_PROMPT = BRANDON_SYSTEM_PROMPT;
 
+export function getPersonaName(): string {
+  return process.env.NEXT_PUBLIC_AI_NAME || process.env.AI_PERSONA_NAME || 'Frank';
+}
+
 export function buildFreePreviewPrompt(
   category: string,
   metricsSummary: string,
@@ -77,6 +81,7 @@ export function buildFreePreviewPrompt(
   lang: string = 'en',
   myName?: string
 ): string {
+  const persona = getPersonaName();
   const normalizedLang = (lang || 'en').toLowerCase();
   const languageDirective =
     normalizedLang === 'fr'
@@ -90,12 +95,12 @@ export function buildFreePreviewPrompt(
     : 'AUDIENCE: Address the reader directly by first name in the second person if known, or as "you".';
 
   return `
-Analyze this chat context and generate Brandon's preview report:
+Analyze this chat context and generate ${persona}'s preview report:
 - Category: ${category}
 ${userNote ? `- User's Personal Note/Question: "${userNote}"` : ''}
 - ${languageDirective}
 - ${audienceLine}
-- STRICT JARGON BAN: No "attachment style", "emotional labor", "tempo controller", "power balance", or "forensic audit". Write with Brandon's warm, razor-sharp wit and grand metaphor.
+- STRICT JARGON BAN: No "attachment style", "emotional labor", "tempo controller", "power balance", or "forensic audit". Write with ${persona}'s warm, razor-sharp wit and grand metaphor.
 
 METRICS SUMMARY:
 ${metricsSummary}
@@ -106,7 +111,25 @@ ${turningPointSummary}
 TRANSCRIPT SAMPLE:
 ${transcriptSample}
 
-Generate Brandon's headline, subheading, verdictTag, and preview teaser with the Grand Metaphor.
+OUTPUT INSTRUCTION: Output ONLY a valid JSON object matching this exact structure:
+{
+  "headline": "Punchy editorial headline summarizing this dynamic",
+  "subheading": "Witty, cutting summary subhead",
+  "verdictTag": "A 2-4 word theme label (e.g. 'High-Stakes Theater')",
+  "grandMetaphor": {
+    "intro": "Direct address to reader setting the central metaphor",
+    "roleReader": "The role the reader plays, quoting their specific quirks and lines",
+    "roleOther": "The role the other person plays, quoting their specific quirks and lines",
+    "dynamicSummary": "How they spend their time together in this chat",
+    "closingPunchline": "Short hook into the report"
+  },
+  "teaserVerdict": "${persona}'s opening verdict that hooks the reader with direct address",
+  "previewHighlights": [
+    "Observation 1 based on actual numbers or quotes",
+    "Observation 2 based on response habits",
+    "Observation 3 based on turning point or balance"
+  ]
+}
 `;
 }
 
@@ -119,6 +142,7 @@ export function buildFullReportPrompt(
   lang: string = 'en',
   myName?: string
 ): string {
+  const persona = getPersonaName();
   const normalizedLang = (lang || 'en').toLowerCase();
   const languageDirective =
     normalizedLang === 'fr'
@@ -132,7 +156,7 @@ export function buildFullReportPrompt(
     : 'AUDIENCE: Address the reader directly in second person ("you"); refer to others by name.';
 
   return `
-Create Brandon's complete, high-quality, unfiltered report for this chat:
+Create ${persona}'s complete, high-quality, unfiltered report for this chat:
 - Category: ${category}
 ${userNote ? `- User's Personal Question/Context: "${userNote}"` : ''}
 - ${languageDirective}
@@ -140,7 +164,7 @@ ${userNote ? `- User's Personal Question/Context: "${userNote}"` : ''}
 
 MANDATORY EDITORIAL INSTRUCTIONS:
 1. Open with an inventive, unforgettable Grand Metaphor (like "The Comedy Club Built Over an Open Heart" or "The Theater Production"). Name what each person plays and quote their weirdest quirks.
-2. Under "realTimeReactions", write 3 to 4 dated scenes with verbatim quotes for speech bubbles (call out deleted message panics, failed indirect flirting, or dramatic "I will never disturb you again" exits).
+2. Under "realTimeReactions", write 3 to 4 dated scenes with verbatim quotes for speech bubbles (call out deleted message panics, failed indirect flirting, or dramatic exits).
 3. Under "metaphorSection", provide an in-depth breakdown of their emotional dance in warm, plain human words.
 4. Under "privateDialect", decode real nicknames, inside jokes, and slang with the psychological subtext.
 5. Under "pairProfile", profile each person's facade vs reality, signature move, and vulnerability tell.
@@ -158,6 +182,96 @@ ${turningPointSummary}
 TRANSCRIPT EXCERPTS:
 ${transcriptSample}
 
-FORMAT STRICTLY AS VALID JSON MATCHING THE BRANDON REPORT SCHEMA.
+OUTPUT INSTRUCTION: Output ONLY a valid JSON object matching this exact structure:
+{
+  "headline": "Editorial headline capturing this dynamic",
+  "subheading": "Witty, cutting summary subhead",
+  "verdictTag": "Theme label",
+  "grandMetaphor": {
+    "intro": "Direct address to reader setting the central metaphor",
+    "roleReader": "The role the reader plays, quoting their quirks and lines",
+    "roleOther": "The role the other person plays, quoting their quirks and lines",
+    "dynamicSummary": "How they spend their time together",
+    "closingPunchline": "Hook into the report"
+  },
+  "realTimeReactions": [
+    {
+      "number": 1,
+      "title": "Scene title",
+      "narrative": "Setting the scene with specific dates, context, and what ${persona} observed",
+      "quotes": [
+        { "sender": "Person 1", "text": "Exact message" },
+        { "sender": "Person 2", "text": "Exact message" }
+      ],
+      "reaction": "${persona}'s honest, hilarious, human reaction"
+    }
+  ],
+  "metaphorSection": {
+    "emoji": "🎪",
+    "title": "Memorable title for the metaphor",
+    "tagline": "One bold thematic sentence summarizing the core dynamic",
+    "paragraphs": [
+      "Rich paragraph exploring dynamic",
+      "Rich paragraph exploring dynamic",
+      "Rich paragraph exploring dynamic"
+    ]
+  },
+  "privateDialect": {
+    "emoji": "🔍",
+    "title": "Linguistic Decoding: Your Private Dialect",
+    "intro": "Introductory commentary on how their private vocabulary works",
+    "entries": [
+      {
+        "term": "slang / nickname / inside joke",
+        "meaning": "what it literally or functionally means",
+        "subtext": "what it actually signals emotionally",
+        "quote": "verbatim quote demonstrating usage"
+      }
+    ]
+  },
+  "pairProfile": {
+    "emoji": "🪞",
+    "title": "Profile of the Pair",
+    "profiles": [
+      {
+        "name": "Name",
+        "roleTitle": "Character title",
+        "theFacade": "The mask they present in the chat",
+        "theReality": "Who they actually are underneath",
+        "signatureMove": "Their signature texting habit or tell",
+        "vulnerabilityTell": "How they secretly signal care or emotion without admitting it"
+      }
+    ]
+  },
+  "yelpReview": {
+    "emoji": "⭐",
+    "title": "The Yelp Review: The Dynamic",
+    "stars": 4,
+    "ambiance": "The emotional atmosphere and environment they build together",
+    "service": "Responsiveness, attentiveness, and who is serving whom",
+    "menu": "What is on offer (banter, late-night crises, reels, selective silence)",
+    "verdict": "${persona}'s final Yelp summary verdict"
+  },
+  "turningPoints": {
+    "emoji": "🕰️",
+    "title": "The Turning Points: When the Subtext Leaked",
+    "points": [
+      {
+        "dateOrPeriod": "Specific date or timeframe",
+        "momentTitle": "Title of turning point",
+        "whatHappened": "The story of what shifted and when the mask slipped",
+        "impact": "How this permanently altered the chat rhythm"
+      }
+    ]
+  },
+  "practicalAdvice": {
+    "emoji": "🎟️",
+    "title": "The Advice",
+    "directTake": "${persona}'s direct, warm, loving advice addressing the reader by first name",
+    "whatToText": "The exact recommended text message to send (or strict directive to send nothing)",
+    "whatToStopDoing": "Habits, excuses, dramatic exits, or panic deletions to immediately stop",
+    "brandonClosing": "${persona}'s witty, memorable closing parting line"
+  }
+}
 `;
 }

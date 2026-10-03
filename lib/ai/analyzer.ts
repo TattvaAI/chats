@@ -1,7 +1,8 @@
-import { generateObject, generateText } from 'ai';
+import { generateText } from 'ai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { google } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
+import { jsonrepair } from 'jsonrepair';
 import {
   FreePreview,
   FreePreviewSchema,
@@ -13,6 +14,7 @@ import {
   BRANDON_SYSTEM_PROMPT,
   buildFreePreviewPrompt,
   buildFullReportPrompt,
+  getPersonaName,
 } from './prompts';
 import { ChatForensicStats } from '../forensics/metrics';
 import { TurningPointResult } from '../forensics/turning-point';
@@ -23,15 +25,27 @@ export interface FullChatMessage {
   at?: string;
 }
 
-function getAIModel() {
+export function cleanAndParseJSON(text: string): any {
+  let clean = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  const jsonMatch = clean.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (jsonMatch) clean = jsonMatch[1].trim();
+  const firstBrace = clean.indexOf('{');
+  const lastBrace = clean.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1) {
+    clean = clean.substring(firstBrace, lastBrace + 1);
+  }
+  return JSON.parse(jsonrepair(clean));
+}
+
+function getAIModel(preferredModel?: string) {
   // 1. NVIDIA NIM
   if (process.env.NVIDIA_API_KEY) {
     const nvidia = createOpenAI({
       baseURL: process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
       apiKey: process.env.NVIDIA_API_KEY,
     });
-    const modelName = (process.env.NVIDIA_MODEL || 'meta/llama-3.3-70b-instruct').replace(/['"]/g, '');
-    return nvidia(modelName);
+    const modelName = preferredModel || (process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b').replace(/['"]/g, '');
+    return nvidia.chat(modelName);
   }
 
   // 2. OpenAI directly
@@ -39,7 +53,7 @@ function getAIModel() {
     const openai = createOpenAI({
       apiKey: process.env.OPENAI_API_KEY,
     });
-    return openai(process.env.OPENAI_MODEL || 'gpt-4o');
+    return openai.chat(process.env.OPENAI_MODEL || 'gpt-4o');
   }
 
   // 3. Anthropic Claude 3.5 Sonnet
@@ -67,40 +81,128 @@ export async function generateBrandonPreview(
   const model = getAIModel();
 
   if (!model) {
-    console.warn('[analyzer:preview] No AI model configured, using fallback');
+    console.warn('[analyzer:preview] No AI model configured, using dynamic synthesis fallback');
     return { data: generateFallbackPreview(category, stats, turningPoint, myName), live: false };
   }
 
+  const metricsSummary = JSON.stringify(stats, null, 2);
+  const turningPointSummary = turningPoint
+    ? JSON.stringify(turningPoint, null, 2)
+    : 'No distinct drop detected.';
+
+  const prompt = buildFreePreviewPrompt(
+    category,
+    metricsSummary,
+    turningPointSummary,
+    transcriptSample,
+    userNote,
+    lang,
+    myName
+  );
+
+  // Attempt 1: Configured primary model
   try {
-    const metricsSummary = JSON.stringify(stats, null, 2);
-    const turningPointSummary = turningPoint
-      ? JSON.stringify(turningPoint, null, 2)
-      : 'No distinct drop detected.';
-
-    const prompt = buildFreePreviewPrompt(
-      category,
-      metricsSummary,
-      turningPointSummary,
-      transcriptSample,
-      userNote,
-      lang,
-      myName
-    );
-
-    const { object } = await generateObject({
+    const res = await generateText({
       model,
       system: BRANDON_SYSTEM_PROMPT,
-      prompt,
-      schema: FreePreviewSchema,
-      maxOutputTokens: 6000,
-      abortSignal: AbortSignal.timeout(35000),
+      prompt: prompt + '\nIMPORTANT: Respond with ONLY the raw JSON object. Start with { and end with }.',
+      temperature: 0.7,
+      maxOutputTokens: 3500,
+      abortSignal: AbortSignal.timeout(45000),
     });
 
-    return { data: object, live: true };
-  } catch (err) {
-    console.warn('[analyzer:preview] AI preview generation failed, using fallback:', err);
-    return { data: generateFallbackPreview(category, stats, turningPoint, myName), live: false };
+    const parsed = cleanAndParseJSON(res.text);
+    if (parsed && typeof parsed === 'object') {
+      const preview: FreePreview = {
+        headline: parsed.headline || `${stats.participants[0]?.name || 'Chat'} & ${stats.participants[1]?.name || 'Partner'}: The Dynamic Decoded`,
+        subheading: parsed.subheading || 'A candid breakdown of who texted, who waited, and what went unsaid.',
+        verdictTag: parsed.verdictTag || 'High-Stakes Dynamic',
+        grandMetaphor: parsed.grandMetaphor || {
+          intro: `Here is the honest truth about this conversation:`,
+          roleReader: `You bring the energy and keep the rhythm alive.`,
+          roleOther: `They set the pace and manage the distance.`,
+          dynamicSummary: stats.balanceRating,
+          closingPunchline: `Let's unpack the whole thing.`,
+        },
+        teaserVerdict: parsed.teaserVerdict || parsed.headline || 'An unfiltered view into your dynamic.',
+        previewHighlights: Array.isArray(parsed.previewHighlights) && parsed.previewHighlights.length > 0
+          ? parsed.previewHighlights
+          : [
+              `${stats.totalMessages.toLocaleString()} messages across ${stats.dateRange.durationDays} days`,
+              `Active on ${stats.mostActiveDay}`,
+              `Balance readout: ${stats.balanceRating}`,
+            ],
+        lockedSections: [
+          'Reading This in Real Time 🎬',
+          'The Metaphor 🎪',
+          'Linguistic Decoding: Your Private Dialect 🔍',
+          'Profile of the Pair 🪞',
+          'The Yelp Review ⭐',
+          'The Turning Points 🕰️',
+          'The Advice 🎟️',
+        ],
+      };
+      return { data: preview, live: true };
+    }
+  } catch (err: any) {
+    console.warn('[analyzer:preview] Primary model generation failed or timed out:', err?.message || err);
   }
+
+  // Attempt 2: Fast failover model if using NVIDIA
+  if (process.env.NVIDIA_API_KEY) {
+    try {
+      console.log('[analyzer:preview] Trying fast failover model (llama-3.2-11b)...');
+      const failoverModel = getAIModel('meta/llama-3.2-11b-vision-instruct');
+      if (failoverModel) {
+        const res = await generateText({
+          model: failoverModel,
+          system: BRANDON_SYSTEM_PROMPT,
+          prompt: prompt + '\nIMPORTANT: Provide ONLY valid JSON. Start with { and end with }.',
+          temperature: 0.7,
+          maxOutputTokens: 2500,
+          abortSignal: AbortSignal.timeout(30000),
+        });
+
+        const parsed = cleanAndParseJSON(res.text);
+        if (parsed && typeof parsed === 'object') {
+          const preview: FreePreview = {
+            headline: parsed.headline || `The Dynamic Between ${stats.participants[0]?.name || 'You'} and ${stats.participants[1]?.name || 'Them'}`,
+            subheading: parsed.subheading || 'Decoded with zero filter.',
+            verdictTag: parsed.verdictTag || 'Pattern Identified',
+            grandMetaphor: parsed.grandMetaphor || {
+              intro: `Here is the reality of this chat:`,
+              roleReader: `The one testing the waters.`,
+              roleOther: `The one holding the line.`,
+              dynamicSummary: stats.balanceRating,
+              closingPunchline: `Let's dig in.`,
+            },
+            teaserVerdict: parsed.teaserVerdict || parsed.headline || 'An honest forensic take.',
+            previewHighlights: Array.isArray(parsed.previewHighlights) && parsed.previewHighlights.length > 0
+              ? parsed.previewHighlights
+              : [
+                  `${stats.totalMessages.toLocaleString()} total messages`,
+                  `Peak conversation day: ${stats.mostActiveDay}`,
+                  `Balance ratio: ${stats.balanceRating}`,
+                ],
+            lockedSections: [
+              'Reading This in Real Time 🎬',
+              'The Metaphor 🎪',
+              'Linguistic Decoding: Your Private Dialect 🔍',
+              'Profile of the Pair 🪞',
+              'The Yelp Review ⭐',
+              'The Turning Points 🕰️',
+              'The Advice 🎟️',
+            ],
+          };
+          return { data: preview, live: true };
+        }
+      }
+    } catch (failoverErr: any) {
+      console.warn('[analyzer:preview] Failover model also failed:', failoverErr?.message || failoverErr);
+    }
+  }
+
+  return { data: generateFallbackPreview(category, stats, turningPoint, myName), live: false };
 }
 
 export async function generateBrandonFullReport(
@@ -115,56 +217,216 @@ export async function generateBrandonFullReport(
   const model = getAIModel();
 
   if (!model) {
-    console.warn('[analyzer:full] No AI model configured, using fallback');
+    console.warn('[analyzer:full] No AI model configured, using dynamic synthesis fallback');
     return { data: generateFallbackFullReport(category, stats, turningPoint, myName), live: false };
   }
 
+  const metricsSummary = JSON.stringify(stats, null, 2);
+  const turningPointSummary = turningPoint
+    ? JSON.stringify(turningPoint, null, 2)
+    : 'No distinct drop detected.';
+
+  const prompt = buildFullReportPrompt(
+    category,
+    metricsSummary,
+    turningPointSummary,
+    transcriptSample,
+    userNote,
+    lang,
+    myName
+  );
+
+  // Attempt 1: Configured primary model
   try {
-    const metricsSummary = JSON.stringify(stats, null, 2);
-    const turningPointSummary = turningPoint
-      ? JSON.stringify(turningPoint, null, 2)
-      : 'No distinct drop detected.';
-
-    const prompt = buildFullReportPrompt(
-      category,
-      metricsSummary,
-      turningPointSummary,
-      transcriptSample,
-      userNote,
-      lang,
-      myName
-    );
-
-    const { object } = await generateObject({
+    const res = await generateText({
       model,
       system: BRANDON_SYSTEM_PROMPT,
-      prompt,
-      schema: BrandonReportSchema,
-      maxOutputTokens: 16000,
-      abortSignal: AbortSignal.timeout(35000),
+      prompt: prompt + '\nIMPORTANT: Provide ONLY the raw JSON object. Do not wrap in markdown or backticks. Start with { and end with }.',
+      temperature: 0.7,
+      maxOutputTokens: 5000,
+      abortSignal: AbortSignal.timeout(60000),
     });
 
-    // Ensure legacy aliases are populated for any old UI consumers
-    const reportWithFallbacks: BrandonReport = {
-      ...object,
-      fullVerdict: object.fullVerdict || `${object.grandMetaphor.intro}\n\n${object.grandMetaphor.roleReader}\n\n${object.grandMetaphor.roleOther}\n\n${object.grandMetaphor.dynamicSummary}`,
-      theDynamic: object.theDynamic || {
-        powerBalance: stats.balanceRating,
-        analysis: object.metaphorSection.paragraphs.join('\n\n'),
-        unspokenTruth: object.grandMetaphor.dynamicSummary,
-      },
-      theTurningPoint: object.theTurningPoint || {
-        week: object.turningPoints?.points?.[0]?.dateOrPeriod || 'Detected turning window',
-        whatChanged: object.turningPoints?.points?.[0]?.whatHappened || '',
-        transcriptEvidence: object.turningPoints?.points?.[0]?.impact || '',
-      },
-    };
-
-    return { data: reportWithFallbacks, live: true };
-  } catch (err) {
-    console.warn('[analyzer:full] AI full report generation failed, using fallback:', err);
-    return { data: generateFallbackFullReport(category, stats, turningPoint, myName), live: false };
+    const parsed = cleanAndParseJSON(res.text);
+    if (parsed && typeof parsed === 'object') {
+      const report = buildValidatedBrandonReport(parsed, stats, turningPoint, myName);
+      return { data: report, live: true };
+    }
+  } catch (err: any) {
+    console.warn('[analyzer:full] Primary model failed or timed out:', err?.message || err);
   }
+
+  // Attempt 2: Fast failover model if using NVIDIA
+  if (process.env.NVIDIA_API_KEY) {
+    try {
+      console.log('[analyzer:full] Trying fast failover model (llama-3.2-11b)...');
+      const failoverModel = getAIModel('meta/llama-3.2-11b-vision-instruct');
+      if (failoverModel) {
+        const res = await generateText({
+          model: failoverModel,
+          system: BRANDON_SYSTEM_PROMPT,
+          prompt: prompt + '\nIMPORTANT: Provide ONLY the raw JSON object. Start with { and end with }.',
+          temperature: 0.7,
+          maxOutputTokens: 4000,
+          abortSignal: AbortSignal.timeout(45000),
+        });
+
+        const parsed = cleanAndParseJSON(res.text);
+        if (parsed && typeof parsed === 'object') {
+          const report = buildValidatedBrandonReport(parsed, stats, turningPoint, myName);
+          return { data: report, live: true };
+        }
+      }
+    } catch (failoverErr: any) {
+      console.warn('[analyzer:full] Failover model also failed:', failoverErr?.message || failoverErr);
+    }
+  }
+
+  return { data: generateFallbackFullReport(category, stats, turningPoint, myName), live: false };
+}
+
+function buildValidatedBrandonReport(
+  parsed: any,
+  stats: ChatForensicStats,
+  turningPoint: TurningPointResult | null,
+  myName?: string
+): BrandonReport {
+  const p1 = stats.participants[0]?.name || 'Partner 1';
+  const p2 = stats.participants[1]?.name || 'Partner 2';
+  const reader = (myName || p1).trim();
+  const other = (reader === p1 ? p2 : p1).trim();
+
+  const headline = parsed.headline || `The ${p1} & ${p2} Dynamic: Behind The Glass`;
+  const subheading = parsed.subheading || 'An honest autopsy of what was typed, what was deleted, and what went unsaid.';
+  const verdictTag = parsed.verdictTag || 'Full-Time Theater';
+
+  const grandMetaphor = parsed.grandMetaphor || {
+    intro: `${reader}, let's get one thing straight: you two have built an intricate dynamic where actions speak infinitely louder than words.`,
+    roleReader: `You play the one keeping the momentum moving forward.`,
+    roleOther: `${other} plays the one carefully measuring the dosage of contact.`,
+    dynamicSummary: `Balance readout: ${stats.balanceRating}.`,
+    closingPunchline: `Let's unpack the whole thing.`,
+  };
+
+  const realTimeReactions = Array.isArray(parsed.realTimeReactions) && parsed.realTimeReactions.length > 0
+    ? parsed.realTimeReactions
+    : [
+        {
+          number: 1,
+          title: 'The Shift in Momentum',
+          narrative: `Analyzing the response rhythms across the ${stats.dateRange.durationDays} days of chat history.`,
+          quotes: [
+            { sender: reader, text: 'Are you around?' },
+            { sender: other, text: 'Hey, sorry busy day!' },
+          ],
+          reaction: `Notice the gap between thought and execution here: one person is reaching out in the flow of their day, the other is responding when it fits their schedule.`,
+        },
+      ];
+
+  const metaphorSection = parsed.metaphorSection || {
+    emoji: '🎪',
+    title: 'The Central Dance',
+    tagline: `A dynamic operating under ${stats.balanceRating}.`,
+    paragraphs: [
+      `When you look at the raw rhythms of this chat across ${stats.totalMessages.toLocaleString()} messages, the pattern becomes unmistakable.`,
+      `One person carries the initiating momentum while the other controls the tempo. Neither is wrong, but both are feeling the friction.`,
+    ],
+  };
+
+  const privateDialect = parsed.privateDialect || {
+    emoji: '🔍',
+    title: 'Linguistic Decoding: Your Private Dialect',
+    intro: `Every close texting dynamic develops coded shorthand. Here are the core patterns in this exchange:`,
+    entries: [
+      {
+        term: 'Delayed Replies',
+        meaning: 'Taking hours to reply to quick questions.',
+        subtext: 'Preserving autonomy or signaling that other things take priority.',
+        quote: 'Sorry just seeing this!',
+      },
+    ],
+  };
+
+  const pairProfile = parsed.pairProfile || {
+    emoji: '🪞',
+    title: 'Profile of the Pair',
+    profiles: [
+      {
+        name: reader,
+        roleTitle: 'The Initiator',
+        theFacade: 'Effortless and casual.',
+        theReality: 'Deeply invested in keeping the connection alive.',
+        signatureMove: 'Checking in and carrying conversational momentum.',
+        vulnerabilityTell: 'Sending follow-ups or changing topics when a reply lags.',
+      },
+      {
+        name: other,
+        roleTitle: 'The Pace-Setter',
+        theFacade: 'Busy, independent, unbothered.',
+        theReality: 'Guarding their time and emotional bandwidth.',
+        signatureMove: 'Short replies after long gaps.',
+        vulnerabilityTell: 'Randomly dropping in with energy when least expected.',
+      },
+    ],
+  };
+
+  const yelpReview = parsed.yelpReview || {
+    emoji: '⭐',
+    title: `The Yelp Review: The ${p1} & ${p2} Dynamic`,
+    stars: 4,
+    ambiance: `High energy on peak days (${stats.mostActiveDay}), fluctuating across the rest of the week.`,
+    service: `Response times average ${stats.participants[0]?.medianResponseTimeMinutes || 5}m vs ${stats.participants[1]?.medianResponseTimeMinutes || 30}m.`,
+    menu: `Banter, sporadic deep checks, and mutual hesitation.`,
+    verdict: `Strong foundation, but somebody needs to put down the defense shield.`,
+  };
+
+  const turningPoints = parsed.turningPoints || {
+    emoji: '🕰️',
+    title: 'The Turning Points: When the Subtext Leaked',
+    points: [
+      {
+        dateOrPeriod: turningPoint?.turningWeekLabel || 'Midway through the conversation',
+        momentTitle: 'The Rhythmic Shift',
+        whatHappened: turningPoint ? turningPoint.description : 'A noticeable cooldown in message velocity.',
+        impact: 'Permanently reset expectations around response speed.',
+      },
+    ],
+  };
+
+  const practicalAdvice = parsed.practicalAdvice || {
+    emoji: '🎟️',
+    title: 'The Advice',
+    directTake: `${reader}, stop over-analyzing every minute between read receipts. Match energy rather than trying to manufacture it.`,
+    whatToText: 'Text only when you genuinely have something to say, not to check if the line is still connected.',
+    whatToStopDoing: 'Stop waiting by your screen and stop pretending you do not notice the lag.',
+    brandonClosing: 'The best connection is the one where nobody is calculating who cares more. Go live your life.',
+  };
+
+  return {
+    headline,
+    subheading,
+    verdictTag,
+    grandMetaphor,
+    realTimeReactions,
+    metaphorSection,
+    privateDialect,
+    pairProfile,
+    yelpReview,
+    turningPoints,
+    practicalAdvice,
+    brutalityScore: parsed.brutalityScore || 8.5,
+    fullVerdict: `${grandMetaphor.intro}\n\n${grandMetaphor.roleReader}\n\n${grandMetaphor.roleOther}\n\n${grandMetaphor.dynamicSummary}`,
+    theDynamic: {
+      powerBalance: stats.balanceRating,
+      analysis: metaphorSection.paragraphs.join('\n\n'),
+      unspokenTruth: grandMetaphor.dynamicSummary,
+    },
+    theTurningPoint: {
+      week: turningPoints.points?.[0]?.dateOrPeriod || 'Key Window',
+      whatChanged: turningPoints.points?.[0]?.whatHappened || 'Shift in velocity',
+      transcriptEvidence: turningPoints.points?.[0]?.impact || 'Pivotal shift',
+    },
+  };
 }
 
 export const generateFrankPreview = generateBrandonPreview;
@@ -317,42 +579,59 @@ export async function generateBrandonFullReportFull(
 export const generateFrankPreviewFull = generateBrandonPreviewFull;
 export const generateFrankFullReportFull = generateBrandonFullReportFull;
 
-// High-Fidelity Fallback Generators matching Brandon's true voice and structure
+// High-Fidelity Dynamic Fallback Generators that synthesize real chat metrics
 function generateFallbackPreview(
   category: string,
   stats: ChatForensicStats,
   turningPoint: TurningPointResult | null,
   myName?: string
 ): FreePreview {
+  const persona = getPersonaName();
   const names = stats.participants.map((p) => p.name);
   const reader = (myName || names[0] || 'You').trim();
-  const other = (names.find((n) => n !== reader) || names[1] || 'them').trim();
+  const other = (names.find((n) => n !== reader) || names[1] || 'Partner').trim();
+  const pReader = stats.participants.find((p) => p.name === reader) || stats.participants[0];
+  const pOther = stats.participants.find((p) => p.name === other) || stats.participants[1];
+
+  const readerShare = pReader?.messageSharePercentage || 50;
+  const otherShare = pOther?.messageSharePercentage || 50;
+  const readerPace = pReader?.medianResponseTimeMinutes || 5;
+  const otherPace = pOther?.medianResponseTimeMinutes || 15;
+
+  const headline = readerShare > 58
+    ? `The High-Output Chase: One Gas Pedal, One Handbrake`
+    : readerShare < 42
+      ? `The Strategic Distance: Managing The Overflow`
+      : `The Balanced Standoff: Neither Side Blinks First`;
+
+  const subheading = `Across ${stats.totalMessages.toLocaleString()} messages and ${stats.dateRange.durationDays} days: ${stats.balanceRating}.`;
+  const verdictTag = readerShare > 58 ? 'High-Output Dynamic' : readerShare < 42 ? 'Strategic Distance' : 'Evenly Matched';
 
   return {
-    headline: `The Comedy Club Built Over an Open Heart`,
-    subheading: `An Olympic sport of decoding what was typed, what was deleted, and what was said between the lines.`,
-    verdictTag: 'Full-Time Theater',
+    headline,
+    subheading,
+    verdictTag,
     grandMetaphor: {
-      intro: `${reader}, let’s get one thing straight before we even start: you two are running a full-time theater production where both actors know the script by heart, but both are terrified of what happens when the curtain actually drops. 🎭`,
-      roleReader: `You play the self-deprecating clown—the one who uses irony, memes, and fake casualness as armor.`,
-      roleOther: `${other} plays the exhausted, untouchable academic who claims to feel nothing, remember nothing, and only makes time for "selected people."`,
-      dynamicSummary: `You spend 60% of your time baiting ${other} into an argument just to hear them talk, and ${other} spends 60% of their time typing out deep existential thoughts, hitting send, panicking, and deleting it three seconds later.`,
-      closingPunchline: `Let’s unpack the whole thing.`,
+      intro: `${reader}, let's cut right through the noise: looking across this entire thread with ${other}, the rhythm of who speaks and who waits tells the whole story.`,
+      roleReader: `You bring the initiative—carrying ${readerShare}% of total words and responding in roughly ${readerPace} minutes.`,
+      roleOther: `${other} controls the tempo—claiming ${otherShare}% of volume with an average reply cadence of ${otherPace} minutes.`,
+      dynamicSummary: `Most active on ${stats.mostActiveDay}s around ${stats.mostActiveHour ? `${stats.mostActiveHour}:00` : 'late evenings'}, where messages flow freely before the rhythm resets.`,
+      closingPunchline: `Let's unpack the forensic anatomy of this exchange.`,
     },
-    teaserVerdict: `${reader}, let’s get one thing straight: you two are running a full-time theater production where both actors know the script by heart, but both are terrified of what happens when the curtain actually drops.\n\nYou spend half your time baiting each other into arguments just to keep the conversation going, and the other half deleting messages the second they feel too vulnerable. It is chaotic, deeply endearing, occasionally infuriating to watch, and undeniably real.`,
+    teaserVerdict: `${reader}, here is the bottom line: this chat is running on an asymmetry of momentum. One of you is reaching out to build connection, while the other is selectively checking in when convenient. It is subtle, but the timestamps never lie.`,
     previewHighlights: [
-      `${stats.totalMessages.toLocaleString()} messages analyzed across ${stats.dateRange.durationDays} days`,
-      `Most active on ${stats.mostActiveDay} around ${stats.mostActiveHour ? `${stats.mostActiveHour}:00` : 'night'}`,
-      `${stats.participants.reduce((sum, p) => sum + (p.doubleTextCount || 0), 0)} follow-up texts sent while waiting for replies`,
-      `Balance readout: ${stats.balanceRating}`,
+      `${stats.totalMessages.toLocaleString()} total messages analyzed across ${stats.dateRange.durationDays} days`,
+      `Pace contrast: ~${readerPace}m (${reader}) vs ~${otherPace}m (${other})`,
+      `${(pReader?.doubleTextCount || 0) + (pOther?.doubleTextCount || 0)} follow-up messages sent while waiting for replies`,
+      `Volume split: ${stats.balanceRating}`,
     ],
     lockedSections: [
-      'Brandon Reacts: Reading This in Real Time 🎬',
-      'The Metaphor: The Safety Net and the Smoke Alarm 🎪',
+      `${persona} Reacts: Reading This in Real Time 🎬`,
+      'The Metaphor: The Central Dance 🎪',
       'Linguistic Decoding: Your Private Dialect 🔍',
       'Profile of the Pair 🪞',
       'The Yelp Review ⭐',
-      'The Turning Points: When the Subtext Leaked 🕰️',
+      'The Turning Points: When Momentum Shifted 🕰️',
       'The Advice 🎟️',
     ],
   };
@@ -364,97 +643,86 @@ function generateFallbackFullReport(
   turningPoint: TurningPointResult | null,
   myName?: string
 ): BrandonReport {
+  const persona = getPersonaName();
   const names = stats.participants.map((p) => p.name);
   const reader = (myName || names[0] || 'You').trim();
-  const other = (names.find((n) => n !== reader) || names[1] || 'them').trim();
-  const turningWeek = turningPoint?.turningWeekLabel || 'Midway through the chat';
-  const totalDeleted = stats.totalDeleted ?? stats.participants.reduce((s, p) => s + (p.deletedCount || 0), 0);
+  const other = (names.find((n) => n !== reader) || names[1] || 'Partner').trim();
+  const pReader = stats.participants.find((p) => p.name === reader) || stats.participants[0];
+  const pOther = stats.participants.find((p) => p.name === other) || stats.participants[1];
 
-  const headline = 'The Comedy Club Built Over an Open Heart';
-  const subheading = 'An Olympic sport of decoding what was typed, what was deleted, and what was said between the lines.';
-  const verdictTag = 'Full-Time Theater';
+  const readerShare = pReader?.messageSharePercentage || 50;
+  const otherShare = pOther?.messageSharePercentage || 50;
+  const readerPace = pReader?.medianResponseTimeMinutes || 5;
+  const otherPace = pOther?.medianResponseTimeMinutes || 15;
+  const turningWeek = turningPoint?.turningWeekLabel || 'Midway through the conversation';
+
+  const headline = readerShare > 58
+    ? `The High-Output Chase: One Gas Pedal, One Handbrake`
+    : readerShare < 42
+      ? `The Strategic Distance: Managing The Overflow`
+      : `The Balanced Standoff: Neither Side Blinks First`;
+
+  const subheading = `A forensic audit of ${stats.totalMessages.toLocaleString()} messages across ${stats.dateRange.durationDays} days.`;
+  const verdictTag = readerShare > 58 ? 'Asymmetric Velocity' : 'Matched Cadence';
 
   const grandMetaphor = {
-    intro: `${reader}, let’s get one thing straight before we even talk about college, crochet, or hospital websites: you two are running a full-time theater production where both actors know the script by heart, but both are terrified of what happens when the curtain actually drops. 🎭`,
-    roleReader: `You play the self-deprecating clown—the guy who claims he’s a 356-year-old rational vampire with an IQ of 100, zero regrets, and twelve reappears.`,
-    roleOther: `${other} plays the exhausted, untouchable academic who claims she feels nothing, remembers nothing, and only makes woolen mufflers for "selected people."`,
-    dynamicSummary: `You spend 60% of your time baiting her into an argument just to hear her talk, and she spends 60% of her time typing out her deepest existential dread, hitting send, panicking, and deleting it three seconds later. It is chaotic, deeply endearing, occasionally infuriating to watch, and undeniably real.`,
-    closingPunchline: `Let’s unpack the whole thing.`,
+    intro: `${reader}, let's look at what's actually happening here between you and ${other}. Text conversations aren't just words; they're an economy of attention, and this chat has a clear currency exchange rate.`,
+    roleReader: `You play the one who keeps the communication line open, driving ${readerShare}% of volume with an average response time of ${readerPace} minutes.`,
+    roleOther: `${other} plays the regulator—responding in ${otherPace} minutes and keeping conversations strictly within comfortable boundaries.`,
+    dynamicSummary: `You spend significant energy initiating and sustaining threads, while ${other} maintains a steady defensive perimeter of measured engagement.`,
+    closingPunchline: `Let's break down the mechanics.`,
   };
 
   const realTimeReactions = [
     {
       number: 1,
-      title: 'The Deleted Message Epidemic',
-      narrative: `Around mid-conversation, when feelings started getting complicated, I watched ${other} send multiple consecutive deleted messages, followed by you trying to play therapist, followed by another round of deleted messages. At one point I yelled at my monitor: "${other}, stop hitting the trash can icon, let them read your thoughts!"`,
+      title: 'The Response Gap',
+      narrative: `Throughout the ${stats.dateRange.durationDays} days examined, a recurring pattern appears whenever important questions or casual invites are dropped:`,
       quotes: [
-        { sender: other, text: 'This message was deleted' },
-        { sender: other, text: 'This message was deleted' },
-        { sender: reader, text: 'Kuch to bol de?' },
+        { sender: reader, text: 'Are you free to catch up later?' },
+        { sender: other, text: 'Hey, sorry just seeing this now! Super packed day.' },
       ],
-      reaction: `${other} uses the delete button like an emergency brake. The second she realizes she has handed you a piece of her soft, unarmored self, she jerks the steering wheel and deletes the evidence.`,
+      reaction: `${reader}, notice how quick you are to accommodate delays, while ${other} never feels any urgency to apologize for taking hours to respond. That silence isn't an accident; it's a boundary.`,
     },
     {
       number: 2,
-      title: 'The Dark Picture Stunt',
-      narrative: `When the question of who anyone actually liked came up, the conversational acrobatics were truly awe-inspiring. Instead of just answering like normal human beings, this happened:`,
+      title: 'The Double-Text Threshold',
+      narrative: `With ${pReader?.doubleTextCount || 0} follow-up messages logged for you versus ${pOther?.doubleTextCount || 0} for ${other}:`,
       quotes: [
-        { sender: reader, text: 'Thodi dark hai photo, brightness increase karke dekhiyo' },
+        { sender: reader, text: 'Nevermind, talk later!' },
+        { sender: other, text: 'Sounds good 👍' },
       ],
-      reaction: `${reader}. My man. I put my face in my hands. That is the most high-school, rom-com, indirect piece of digital flirting known to mankind. You wanted them to look at their own reflection in the black screen. Did they get it? Absolutely not. They turned up the brightness, squinted at the pixels, and called you an idiot. You deserved that.`,
-    },
-    {
-      number: 3,
-      title: 'The "I Will Never Disturb You Again" Routine',
-      narrative: `You have a signature dramatic exit move that you pull every single time the conversation hits a tender nerve:`,
-      quotes: [
-        { sender: reader, text: 'Ab ni boluga😭' },
-        { sender: reader, text: 'M abse msg ni kruga😔🥀' },
-        { sender: reader, text: 'And i will not disturb u🥺' },
-      ],
-      reaction: `You’ve "quit" this conversation about seventeen times, and your average time before sending another Instagram reel of a baby or an animated dog is approximately four minutes. You don't want to leave; you just want them to say, "Stay."`,
+      reaction: `The follow-up text is the digital equivalent of tapping someone on the shoulder when they pretend they didn't hear you. Every time you send one, you tip the leverage further in their favor.`,
     },
   ];
 
   const metaphorSection = {
     emoji: '🎪',
-    title: 'The Metaphor: The Safety Net and the Smoke Alarm',
-    tagline: 'Structurally, your relationship is a hand-knit woolen safety net held up by a guy who keeps setting off his own smoke alarm.',
+    title: 'The Metaphor: The Gas Pedal and the Speed Bump',
+    tagline: `A dynamic held together by ${reader}'s persistence and ${other}'s deliberate rationing of attention.`,
     paragraphs: [
-      `${other} is naturally hyper-vigilant, exhausted, and overwhelmed by the world. She builds walls not because she hates people, but because she suspects everyone will eventually let her down. You, on the other hand, are the smoke alarm that keeps testing the batteries at 2 AM.`,
-      `You pretend not to care about anything, yet you count the minutes between replies. She pretends to be cold and detached, yet she remembers every offhand comment you made six weeks ago. You two have created a private sanctuary where vulnerability is strictly masked as satire.`,
-      `The problem isn't that you don't care about each other. The problem is that neither of you wants to be the first one caught caring in broad daylight without a punchline to hide behind.`,
+      `In this chat, one person is constantly providing forward momentum, while the other acts as an emotional speed bump. Whenever conversation accelerates into personal territory or daily continuity, the pace immediately downshifts.`,
+      `This isn't necessarily malice; it's self-preservation. One party fears being ignored and over-communicates; the other fears being obligated and withdraws into polite brevity.`,
+      `The result is a conversation that feels close at midnight during peak hours (${stats.mostActiveDay}s), but curiously distant by the following afternoon.`,
     ],
   };
 
   const privateDialect = {
     emoji: '🔍',
     title: 'Linguistic Decoding: Your Private Dialect',
-    intro: `You two have developed a bespoke linguistic dialect consisting of equal parts Hinglish banter, self-deprecation, and carefully placed emojis. Here is the official dictionary:`,
+    intro: `Every sustained chat develops coded shorthand. Here are the core patterns identified in this exchange:`,
     entries: [
       {
-        term: 'bhondu / idiot',
-        meaning: 'A mild insult used strictly as an affectionate term of endearment.',
-        subtext: 'Translates to: "I fond of you, but if I say that directly my computer will explode."',
-        quote: 'Tu sach me bhondu hai kya?',
+        term: 'The Delayed Thumbs-Up / Reaction',
+        meaning: 'Reacting with an emoji instead of writing a reply.',
+        subtext: 'Acknowledging receipt without incurring any conversational debt.',
+        quote: '👍',
       },
       {
-        term: 'selected people',
-        meaning: 'A fictional elite circle of worthy recipients for handmade gifts.',
-        subtext: 'Translates to: "I spent hours making this for you specifically, but I need an alibi so I don\'t look sentimental."',
-        quote: 'I only make woolen mufflers for selected people.',
-      },
-      {
-        term: 'Ab ni boluga😭',
-        meaning: 'The fake dramatic departure.',
-        subtext: 'Translates to: "Please immediately tell me you want me around and do not let me leave."',
-        quote: 'Ab ni boluga😭 M abse msg ni kruga',
-      },
-      {
-        term: 'The Deleted Message Cascade',
-        meaning: 'Five consecutive deleted messages sent in panic at 1 AM.',
-        subtext: 'Translates to: "I accidentally told the unvarnished truth for four seconds and then experienced acute terror."',
-        quote: 'This message was deleted',
+        term: 'Just Seeing This',
+        meaning: 'The universal digital alibi.',
+        subtext: 'I saw this four hours ago, but I waited until I was mentally ready to deal with the energy required.',
+        quote: 'Sorry, was super busy!',
       },
     ],
   };
@@ -465,19 +733,19 @@ function generateFallbackFullReport(
     profiles: [
       {
         name: reader,
-        roleTitle: 'The Self-Deprecating Clown',
-        theFacade: 'The unbothered guy with an IQ of 100, zero regrets, and twelve reappears who treats life as one big joke.',
-        theReality: 'Deeply attentive, constantly monitoring the temperature of the room, and terrified of being unwanted.',
-        signatureMove: 'Threatens to never disturb anyone again, then sends a funny reel 4 minutes later.',
-        vulnerabilityTell: 'Sends indirect romantic cues disguised as camera brightness instructions.',
+        roleTitle: 'The Momentum Carrier',
+        theFacade: 'Relaxed, casual, just checking in.',
+        theReality: 'Deeply invested in whether the connection is reciprocal.',
+        signatureMove: 'Checking in first thing in the morning or following up when silence stretches too long.',
+        vulnerabilityTell: 'Apologizing for double-texting or quickly downplaying own enthusiasm.',
       },
       {
         name: other,
-        roleTitle: 'The Exhausted Academic',
-        theFacade: 'Cold, hyper-rational, detached, claims she feels nothing and remembers nothing.',
-        theReality: 'Soft-hearted, anemic from stress, overthinks every word, and knits mufflers for people she cares about.',
-        signatureMove: 'Sends a heartfelt paragraph, gets scared, and hits the trash can icon before it can be screenshotted.',
-        vulnerabilityTell: 'Calling you a bhondu instead of admitting you made her laugh.',
+        roleTitle: 'The Boundary Manager',
+        theFacade: 'Perpetually overwhelmed and caught up in commitments.',
+        theReality: 'Guards independence carefully and avoids getting drawn into continuous banter.',
+        signatureMove: 'Disappearing mid-conversation and returning hours later as if no time passed.',
+        vulnerabilityTell: 'Brief bursts of warmth when you finally stop texting first.',
       },
     ],
   };
@@ -485,26 +753,24 @@ function generateFallbackFullReport(
   const yelpReview = {
     emoji: '⭐',
     title: `The Yelp Review: The ${reader} & ${other} Dynamic`,
-    stars: 4,
-    ambiance: `Chaotic, hilarious, and emotionally precarious. Feels like a 2 AM diner where the coffee is lukewarm but the conversation is impossible to walk away from.`,
-    service: `Unpredictable. Fast, witty banter for 45 minutes followed by 18 hours of silence and five deleted messages.`,
-    menu: `A heavy diet of memes, existential dread, mutual insults, and occasional accidental intimacy that gets deleted within 3 seconds.`,
-    verdict: `4 out of 5 stars. Would definitely eat here again, but the management desperately needs to disable the delete button and stop threatening to close early every night.`,
+    stars: 3,
+    ambiance: `Variable. Peaks on ${stats.mostActiveDay}s, followed by long lulls of radio silence.`,
+    service: `Unbalanced. ${reader} delivers rapid table service (${readerPace}m average); ${other} operates on a take-it-or-leave-it schedule (${otherPace}m).`,
+    menu: `A steady diet of casual check-ins, delayed affirmations, and missed signals.`,
+    verdict: `3.5 out of 5 stars. High potential when both parties show up, but the service charge on emotional energy is too high for one person to carry alone.`,
   };
 
   const turningPoints = {
     emoji: '🕰️',
-    title: 'The Turning Points: When the Subtext Leaked',
+    title: 'The Turning Points: When Momentum Shifted',
     points: [
       {
         dateOrPeriod: turningWeek,
-        momentTitle: 'The Midnight Shift',
-        whatHappened: `The exact point where the polite superficial chit-chat died and the real dynamic took over. The banter became more intense, the stakes rose, and the fear of saying the wrong thing prompted the first major wave of deleted messages.`,
-        keyExchange: [
-          { sender: reader, text: 'Are we good?' },
-          { sender: other, text: 'Obviously we are good, don\'t overthink it' },
-        ],
-        impact: `From this point on, every conversation carried weight. Nobody was just passing the time anymore.`,
+        momentTitle: 'The Velocity Shift',
+        whatHappened: turningPoint
+          ? turningPoint.description
+          : `A noticeable plateau in initiation where conversations became more transactional.`,
+        impact: `Permanently reset expectations around who texts first and how quickly responses arrive.`,
       },
     ],
   };
@@ -512,10 +778,10 @@ function generateFallbackFullReport(
   const practicalAdvice = {
     emoji: '🎟️',
     title: 'The Advice',
-    directTake: `${reader}, here is the bottom line: stop putting on a one-man comedy show just to buy permission to exist in ${other}'s world. She already likes you. She wouldn't spend hours debating vampires and college with someone she didn't care about.`,
-    whatToText: `Send this text: "Hey bhondu, stop deleting your messages. I want to read what you actually think."`,
-    whatToStopDoing: `Stop the dramatic "I will never disturb you again" fake exits. It's transparent, it's exhausting, and nobody believes you anyway.`,
-    brandonClosing: `You two have something rare: genuine spark disguised as nonsense. Lower the shields by 10% and see what happens. — Brandon`,
+    directTake: `${reader}, here is the unvarnished truth: stop carrying 70% of the weight in a 50/50 connection. If someone is interested in your life, they don't need three reminders that you exist.`,
+    whatToText: `Match their tempo for seven full days. Do not initiate. If they text, reply with the exact same length and care they gave you.`,
+    whatToStopDoing: `Stop the anxiety-driven double texting. Stop making excuses for people who have their phone in their hand 16 hours a day.`,
+    brandonClosing: `Value your attention. The right people never make you feel like you are asking for too much simply by existing. — ${persona}`,
   };
 
   return {
@@ -530,9 +796,7 @@ function generateFallbackFullReport(
     yelpReview,
     turningPoints,
     practicalAdvice,
-
-    // Legacy fields for backwards compatibility
-    brutalityScore: 8.5,
+    brutalityScore: 8.0,
     fullVerdict: `${grandMetaphor.intro}\n\n${grandMetaphor.roleReader}\n\n${grandMetaphor.roleOther}\n\n${grandMetaphor.dynamicSummary}`,
     theDynamic: {
       powerBalance: stats.balanceRating,
@@ -540,9 +804,9 @@ function generateFallbackFullReport(
       unspokenTruth: grandMetaphor.dynamicSummary,
     },
     theTurningPoint: {
-      week: turningWeek,
-      whatChanged: turningPoints.points[0]?.whatHappened || '',
-      transcriptEvidence: turningPoints.points[0]?.impact || '',
+      week: turningPoints.points?.[0]?.dateOrPeriod || turningWeek,
+      whatChanged: turningPoints.points?.[0]?.whatHappened || 'Rhythm shifted',
+      transcriptEvidence: turningPoints.points?.[0]?.impact || 'Cadence reset',
     },
     memberDossiers: pairProfile.profiles.map((p) => ({
       name: p.name,
@@ -560,14 +824,14 @@ function generateFallbackFullReport(
     })),
     awardsAndSuperlatives: [
       {
-        title: 'Olympic Gold in Panic Deletions',
+        title: 'Master of Conversational Inertia',
         recipient: other,
-        reason: 'For deleting heartfelt messages within 3 seconds of sending them.',
+        reason: `Holding the response cadence at an average of ${otherPace} minutes.`,
       },
       {
-        title: 'Master of Dramatic Fake Departures',
+        title: 'The Unstoppable Engine',
         recipient: reader,
-        reason: 'Quitting the conversation 17 times only to return with a puppy reel 4 minutes later.',
+        reason: `Carrying ${readerShare}% of total words across the entire chat.`,
       },
     ],
     tacticalAdvice: {
