@@ -8,7 +8,7 @@ export interface ParticipantMetrics {
   avgWordsPerMessage: number;
   conversationsInitiated: number;
   initiationPercentage: number;
-  medianResponseTimeMinutes: number;
+  medianResponseTimeMinutes: number | null;
   doubleTextCount: number;
   nightOwlPercentage: number;
   topEmojis: string[];
@@ -20,6 +20,7 @@ export interface ChatForensicStats {
   totalMessages: number;
   totalConversations: number;
   totalDeleted?: number;
+  activeDays?: number;
   dateRange: {
     start: string;
     end: string;
@@ -34,7 +35,7 @@ const INACTIVITY_GAP_HOURS = 4;
 const INACTIVITY_GAP_MS = INACTIVITY_GAP_HOURS * 60 * 60 * 1000;
 
 export function computeChatMetrics(messages: ParsedMessage[]): ChatForensicStats {
-  const userMessages = messages.filter((m) => !m.isSystem && m.sender !== 'System');
+  const userMessages = messages.filter((m) => !m.isSystem && !m.isReaction).slice().sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   if (userMessages.length === 0) {
     return {
       participants: [],
@@ -61,7 +62,7 @@ export function computeChatMetrics(messages: ParsedMessage[]): ChatForensicStats
       deleted: number;
       emojis: Record<string, number>;
     }
-  > = {};
+  > = Object.create(null);
 
   senders.forEach((s) => {
     participantData[s] = {
@@ -96,19 +97,14 @@ export function computeChatMetrics(messages: ParsedMessage[]): ChatForensicStats
     if (isDeleted) {
       data.deleted++;
     }
-    // Strip any residual iMessage reaction/tapback/service prefix before computing word count
-    const cleanContent = msg.content
-      .replace(/^(?:Liked|Loved|Disliked|Laughed at|Emphasized|Questioned|A aimé|A adoré|A ri de|A souligné|A désapprouvé|A interrogé|Le ha gustado|Le encanta)\s+[“"«](.*?)[”"»]?$/is, '$1')
-      .replace(/^(?:Liked|Loved|Disliked|Laughed at|Emphasized|Questioned)\s+/i, '')
-      .replace(/^\[?iMessage\]?:\s*/i, '');
-    const words = cleanContent.trim().split(/\s+/).filter(Boolean).length;
+    const words = isDeleted || msg.isReaction || /^<?(?:media|image|video|audio|sticker) omitted>?$/i.test(msg.content.trim()) ? 0 : (msg.content.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || []).length;
     data.words += words;
 
     // Time analysis
     const msgDate = new Date(msg.timestamp);
-    const hour = msgDate.getHours();
+    const hour = msgDate.getUTCHours();
     hourOfDayCount[hour]++;
-    dayOfWeekCount[days[msgDate.getDay()]]++;
+    dayOfWeekCount[days[msgDate.getUTCDay()]]++;
 
     if (hour >= 23 || hour <= 5) {
       data.nightMessages++;
@@ -131,10 +127,10 @@ export function computeChatMetrics(messages: ParsedMessage[]): ChatForensicStats
     }
 
     // Response latency & double-text check
-    if (prev) {
+    if (prev && msg.timestamp.getTime() - prev.timestamp.getTime() < INACTIVITY_GAP_MS) {
       if (prev.sender !== msg.sender) {
         const diffMinutes = (msg.timestamp.getTime() - prev.timestamp.getTime()) / (1000 * 60);
-        if (diffMinutes > 0 && diffMinutes <= 24 * 60) {
+        if (diffMinutes >= 0) {
           data.latencies.push(diffMinutes);
         }
       } else {
@@ -150,8 +146,8 @@ export function computeChatMetrics(messages: ParsedMessage[]): ChatForensicStats
     d.latencies.sort((a, b) => a - b);
     const medianLatency =
       d.latencies.length > 0
-        ? d.latencies[Math.floor(d.latencies.length / 2)]
-        : 0;
+        ? (d.latencies[Math.floor((d.latencies.length - 1) / 2)] + d.latencies[Math.floor(d.latencies.length / 2)]) / 2
+        : null;
 
     const sortedEmojis = Object.entries(d.emojis)
       .sort((a, b) => b[1] - a[1])
@@ -166,7 +162,7 @@ export function computeChatMetrics(messages: ParsedMessage[]): ChatForensicStats
       avgWordsPerMessage: Math.round((d.words / (d.count || 1)) * 10) / 10,
       conversationsInitiated: d.initiations,
       initiationPercentage: Math.round((d.initiations / (totalConversations || 1)) * 100),
-      medianResponseTimeMinutes: Math.round(medianLatency),
+      medianResponseTimeMinutes: medianLatency === null ? null : Math.round(medianLatency * 10) / 10,
       doubleTextCount: d.doubleTexts,
       nightOwlPercentage: Math.round((d.nightMessages / (d.count || 1)) * 100),
       topEmojis: sortedEmojis,
@@ -178,7 +174,7 @@ export function computeChatMetrics(messages: ParsedMessage[]): ChatForensicStats
   const endDate = userMessages[userMessages.length - 1].timestamp;
   const durationDays = Math.max(
     1,
-    Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
+    Math.floor(endDate.getTime() / 86400000) - Math.floor(startDate.getTime() / 86400000) + 1
   );
 
   let bestDay = 'Friday';
@@ -214,11 +210,12 @@ export function computeChatMetrics(messages: ParsedMessage[]): ChatForensicStats
   return {
     participants,
     totalMessages: totalMsgCount,
+    activeDays: new Set(userMessages.map(m => m.timestamp.toISOString().slice(0, 10))).size,
     totalConversations,
     totalDeleted: participants.reduce((s, p) => s + (p.deletedCount || 0), 0),
     dateRange: {
-      start: startDate.toLocaleDateString(),
-      end: endDate.toLocaleDateString(),
+      start: startDate.toISOString().slice(0, 10),
+      end: endDate.toISOString().slice(0, 10),
       durationDays,
     },
     mostActiveDay: bestDay,

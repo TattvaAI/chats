@@ -1,5 +1,12 @@
-.env.local
-.env.vercel
-.env*.local
+.env*
 node_modules
 .next
+tmp
+test
+tests
+output
+.git
+.agents
+.claude
+.neon
+*.log

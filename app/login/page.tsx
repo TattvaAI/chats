@@ -1,155 +1,117 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRight, ShieldCheck } from 'lucide-react';
-import { SiteHeader, SiteFooter } from '@/components/brandon/header';
+import { SiteHeader, SiteFooter } from '@/components/frank/header';
+import { localClaims, safeDestination, saveLoginIntent } from '@/lib/store/access';
+import { responseError } from '@/lib/hooks/report-client';
+import { clearPrivateClientState, useSession } from '@/lib/hooks/useSession';
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+interface AuthConfig { google: boolean; email: boolean; requireAuth: boolean }
+const OAUTH_ERRORS: Record<string, string> = {
+  google_not_configured: 'Google sign-in is not configured on this site yet. Please contact support.',
+  google_cancelled: 'Google sign-in was cancelled. You can try again when you are ready.',
+  google_denied: 'Google sign-in was cancelled. You can try again when you are ready.',
+  access_denied: 'Google sign-in was cancelled. You can try again when you are ready.',
+  google_state_invalid: 'Your sign-in request expired or could not be verified. Start Google sign-in again.',
+  google_token_failed: 'Google could not complete sign-in. Please try again.',
+  google_profile_failed: 'Google could not verify your account details. Please try again.',
+  google_no_email: 'Google did not provide a verified email address. Choose an account with a verified email.',
+  google_account_conflict: 'This email is already linked to a different Google identity. Use your original Google account or contact support.',
+  google_server_error: 'Sign-in is temporarily unavailable. Please try again in a moment.',
+};
 
-export default function LoginPage() {
-  return (
-    <Suspense>
-      <LoginInner />
-    </Suspense>
-  );
-}
+export default function Login() { return <Suspense><LoginForm /></Suspense>; }
 
-function LoginInner() {
+function LoginForm() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const claimParam = searchParams?.get('claim') ?? '';
-  const nextParam = searchParams?.get('next') ?? '';
-  const claimId = UUID_RE.test(claimParam) ? claimParam : '';
-  const nextPath =
-    nextParam.startsWith('/') && !nextParam.startsWith('//') ? nextParam : '/account';
+  const params = useSearchParams();
+  const session = useSession();
   const [email, setEmail] = useState('');
-  const [codeSent, setCodeSent] = useState(false);
   const [code, setCode] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const [verifying, setVerifying] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [config, setConfig] = useState<AuthConfig | null>(null);
+  const [configError, setConfigError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [candidateIds, setCandidateIds] = useState<string[]>([]);
+  const [storageError, setStorageError] = useState('');
+  const [saveGuests, setSaveGuests] = useState(params.has('claim') || params.get('save') === 'all');
+  const destination = safeDestination(params.get('next'));
+  const claimId = params.get('claim');
+  const oauthCode = params.get('error');
+  const oauthError = oauthCode ? OAUTH_ERRORS[oauthCode] || 'Sign-in could not be completed. Please try again.' : '';
 
   useEffect(() => {
-    const prefill = searchParams?.get('email') ?? '';
-    if (prefill) {
-      queueMicrotask(() => setEmail((prev) => prev || prefill));
+    const controller = new AbortController();
+    async function load() {
+      setConfigError('');
+      try {
+        const response = await fetch('/api/auth/config', { cache: 'no-store', signal: controller.signal });
+        if (!response.ok) throw new Error('Sign-in options could not be loaded. Please retry.');
+        const data = await response.json();
+        if (typeof data.google !== 'boolean' || typeof data.email !== 'boolean' || typeof data.requireAuth !== 'boolean') throw new Error('Sign-in options could not be read. Please retry.');
+        if (!controller.signal.aborted) setConfig(data);
+      } catch (error) { if (!controller.signal.aborted) setConfigError(error instanceof Error ? error.message : 'Could not load sign-in options.'); }
+      try {
+        const ids = localClaims(claimId || undefined).map(claim => claim.id);
+        if (!controller.signal.aborted) { setCandidateIds(ids); setStorageError(''); }
+      } catch (error) { if (!controller.signal.aborted) setStorageError(error instanceof Error ? error.message : 'Guest access could not be read.'); }
     }
-    const err = searchParams?.get('error');
-    if (err === 'google_not_configured') {
-      setError('Google OAuth is not configured yet. You can sign in instantly using your email below.');
-    } else if (err) {
-      setError(`Sign-in note: ${err.replace(/_/g, ' ')}`);
-    }
-  }, [searchParams]);
+    void load();
+    return () => controller.abort();
+  }, [attempt, claimId]);
 
-  const handleInstantSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email) return;
-    setError(null);
-    setSending(true);
+  function prepareLogin() {
+    if (saveGuests && storageError) throw new Error(storageError);
+    if (saveGuests && claimId && candidateIds.length === 0) throw new Error('This browser no longer has guest access to that report. Sign in without saving it, or use the browser where you created it.');
+    saveLoginIntent(saveGuests ? candidateIds : [], destination);
+    clearPrivateClientState();
+  }
+
+  function googleLogin(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (busy) { event.preventDefault(); return; }
+    setError('');
     try {
-      const res = await fetch('/api/auth/instant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, claimIds: claimId ? [claimId] : [] }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data.error || 'Sign-in failed. Please check your email.');
-        return;
-      }
-      router.push(nextPath);
-    } catch {
-      setError('Connection failed. Please try again.');
-    } finally {
-      setSending(false);
-    }
-  };
+      prepareLogin(); setBusy(true);
+    } catch (error) { event.preventDefault(); setError(error instanceof Error ? error.message : 'Could not start sign-in.'); setBusy(false); }
+  }
 
-  return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <SiteHeader />
+  function saveToCurrentAccount() {
+    setError('');
+    try { prepareLogin(); router.push(`/login/complete?next=${encodeURIComponent(destination)}`); }
+    catch (error) { setError(error instanceof Error ? error.message : 'Could not save the report.'); }
+  }
 
-      <main className="flex flex-1 flex-col items-center justify-center px-6 py-20">
-        <div className="w-full max-w-sm flex flex-col gap-6 text-center">
-          <div className="flex flex-col gap-2">
-            <h1 className="font-serif text-3xl font-medium tracking-tight">
-              Sign in to Brandon
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              Access all your saved chat reports and forensic timelines from any device.
-            </p>
-          </div>
+  async function submit(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setError('');
+    try {
+      prepareLogin();
+      const response = await fetch(sent ? '/api/auth/verify-code' : '/api/auth/send-code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sent ? { email: email.trim(), code } : { email: email.trim() }) });
+      if (!response.ok) throw new Error(await responseError(response, 'Could not sign in. Please retry.'));
+      if (sent) router.replace(`/login/complete?next=${encodeURIComponent(destination)}`);
+      else setSent(true);
+    } catch (error) { setError(error instanceof Error ? error.message : 'Could not sign in.'); }
+    finally { setBusy(false); }
+  }
 
-          {error && (
-            <div className="rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-xs text-destructive text-left leading-relaxed">
-              {error}
-            </div>
-          )}
-
-          {/* Google Sign In Button */}
-          <a
-            href={`/api/auth/google?next=${encodeURIComponent(nextPath)}`}
-            className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-border bg-card px-4 text-sm font-medium text-foreground shadow-2xs hover:bg-accent transition-all cursor-pointer"
-          >
-            <svg className="size-5" viewBox="0 0 24 24">
-              <path
-                fill="#4285F4"
-                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-              />
-              <path
-                fill="#EA4335"
-                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-              />
-            </svg>
-            <span>Continue with Google</span>
-          </a>
-
-          <div className="relative flex items-center justify-center">
-            <span className="w-full border-t border-border" />
-            <span className="bg-background px-3 text-xs uppercase tracking-wider text-muted-foreground font-mono">
-              or with email
-            </span>
-            <span className="w-full border-t border-border" />
-          </div>
-
-          <form onSubmit={handleInstantSignIn} className="flex flex-col gap-4">
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@example.com"
-              className="w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
-            />
-            <button
-              type="submit"
-              disabled={sending}
-              className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-neutral-900 px-6 text-sm font-medium text-white shadow-sm hover:bg-neutral-800 transition-all cursor-pointer disabled:opacity-50"
-            >
-              <span>{sending ? 'Signing in…' : 'Continue with Email'}</span>
-              <ArrowRight className="size-4" />
-            </button>
-          </form>
-
-          <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground pt-2">
-            <ShieldCheck className="size-3.5 text-emerald-600" />
-            <span>100% Free · Stored securely until you delete it</span>
-          </div>
-        </div>
-      </main>
-
-      <SiteFooter />
-    </div>
-  );
+  return <div className="flex min-h-screen flex-col"><SiteHeader /><main className="mx-auto w-full max-w-md flex-1 px-6 py-20 sm:py-24">
+    <h1 className="font-serif text-4xl">Your conversations, saved.</h1><p className="mt-4 text-sm leading-relaxed text-muted-foreground">Sign in to keep your reports in your account and return on any device. Creating and reading a report is free.</p>
+    {(error || oauthError) && <p role="alert" className="mt-6 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">{error || oauthError}</p>}
+    {configError && <div role="alert" className="mt-6 space-y-2 text-sm text-destructive"><p>{configError}</p><button onClick={() => setAttempt(value => value + 1)} className="underline">Retry sign-in options</button></div>}
+    {!config && !configError && <p role="status" className="mt-6 text-sm text-muted-foreground">Loading sign-in options…</p>}
+    {(candidateIds.length > 0 || claimId || (saveGuests && storageError)) && <label className="mt-6 flex items-start gap-3 rounded-xl border border-border p-4 text-sm leading-relaxed"><input type="checkbox" checked={saveGuests} onChange={event => setSaveGuests(event.target.checked)} disabled={busy} className="mt-1 size-4 shrink-0" /><span>{claimId ? 'Save this guest report to the account I sign in to.' : `Save ${candidateIds.length === 1 ? 'my guest report' : 'my guest reports from this browser'} to the account I sign in to.`}</span></label>}
+    {saveGuests && storageError && <p role="alert" className="mt-3 text-sm text-destructive">{storageError}</p>}
+    {session.profile && <div className="mt-6 rounded-xl border border-border p-4 text-sm"><p className="break-words">Signed in as {session.profile.email}.</p><button onClick={saveToCurrentAccount} disabled={busy} className="mt-3 font-medium underline disabled:opacity-50">{saveGuests ? 'Save to this account' : 'Continue to my account'}</button></div>}
+    {config?.google && <a href={`/api/auth/google?next=${encodeURIComponent(destination)}`} onClick={googleLogin} aria-disabled={busy} className="mt-8 flex w-full items-center justify-center gap-3 rounded-xl bg-neutral-900 p-4 font-medium text-white disabled:opacity-50"><span aria-hidden="true" className="font-sans text-lg font-semibold">G</span>{busy ? 'Please wait…' : 'Continue with Google'}</a>}
+    {config?.email && <form onSubmit={submit} className="mt-8 space-y-5">{config.google && <p className="text-center text-xs text-muted-foreground">Or use an email sign-in code</p>}<label className="block text-sm">Email<input className="mt-2 w-full rounded-xl border border-border p-3" type="email" autoComplete="email" maxLength={254} required value={email} onChange={event => setEmail(event.target.value)} disabled={sent || busy} /></label>
+      {sent && <label className="block text-sm">Six-digit code<input className="mt-2 w-full rounded-xl border border-border p-3" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} disabled={busy} /></label>}
+      <button disabled={busy} className="w-full rounded-xl border border-border p-4 font-medium disabled:opacity-50">{busy ? 'Please wait…' : sent ? 'Verify and sign in' : 'Send a sign-in code'}</button>
+      {sent && <><p role="status" className="text-xs text-muted-foreground">Check your inbox and spam folder for your sign-in code.</p><button type="button" disabled={busy} onClick={() => { setSent(false); setCode(''); setError(''); }} className="text-sm underline">Use a different email or request another code</button></>}
+    </form>}
+    {config && !config.google && !config.email && <div role="status" className="mt-8 space-y-3 rounded-xl border border-border p-4 text-sm"><p>Sign-in has not been configured on this site yet. Contact the site operator before uploading a private chat.</p><button onClick={() => setAttempt(value => value + 1)} className="underline">Check again</button><Link href="/support" className="ml-5 underline">Support</Link></div>}
+    {config && !config.requireAuth && <Link href="/setup" className="mt-8 block text-center text-xs text-muted-foreground underline">Continue as a guest on this browser</Link>}
+  </main><SiteFooter /></div>;
 }

@@ -1,12 +1,10 @@
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
-import { SiteHeader, SiteFooter } from '@/components/brandon/header';
-import { HeroCluster } from '@/components/brandon/hero-cluster';
-import { MarqueePills } from '@/components/brandon/marquee-pills';
-import { InteractiveStage } from '@/components/brandon/interactive-stage';
-import { Testimonials } from '@/components/brandon/testimonials';
-import { StatsBanner } from '@/components/brandon/stats-banner';
-import { WallOfLove } from '@/components/brandon/wall-of-love';
+import { SiteHeader, SiteFooter } from '@/components/frank/header';
+import { HeroCluster } from '@/components/frank/hero-cluster';
+import { MarqueePills } from '@/components/frank/marquee-pills';
+import { InteractiveStage } from '@/components/frank/interactive-stage';
+import { StatsBanner } from '@/components/frank/stats-banner';
 
 export default function HomePage() {
   return (
@@ -21,12 +19,12 @@ export default function HomePage() {
             <HeroCluster />
 
             {/* Headline & Subhead */}
-            <div className="flex flex-col items-center gap-3 sm:gap-4 max-w-2xl px-2 sm:px-0">
-              <h1 className="font-serif text-4xl font-normal leading-[1.18] tracking-tight text-foreground sm:text-5xl lg:text-6xl text-balance">
-                Upload a chat. <span className="underline decoration-amber-400 underline-offset-6">Brandon</span> tells you what&apos;s really going on.
+            <div className="flex flex-col items-center gap-3 sm:gap-4 max-w-3xl px-2 sm:px-0">
+              <h1 className="font-sans text-4xl font-medium leading-[1.25] tracking-tight text-foreground sm:text-5xl text-balance">
+                Upload a chat. <span>Frank</span> tells you what&apos;s really going on.
               </h1>
               <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-                Brandon reads every message and writes what he really thinks about everyone in it.
+                Frank reads every message and writes what he really thinks about everyone in it.
               </p>
             </div>
 
@@ -51,7 +49,7 @@ export default function HomePage() {
 
             {/* Testimonials Carousel */}
             <div className="w-full pt-8 sm:pt-10">
-              <Testimonials />
+
             </div>
           </div>
         </section>
@@ -60,16 +58,16 @@ export default function HomePage() {
         <StatsBanner />
 
         {/* WALL OF LOVE */}
-        <WallOfLove />
+
 
         {/* BOTTOM CALL TO ACTION */}
         <section className="w-full py-14 sm:py-20 px-4 sm:px-6 text-center border-t border-border bg-card">
           <div className="mx-auto flex max-w-2xl flex-col items-center gap-5 sm:gap-6">
             <h2 className="font-serif text-3xl font-medium sm:text-4xl">
-              Ready to find out what Brandon thinks?
+              Ready to find out what Frank thinks?
             </h2>
             <p className="text-muted-foreground text-sm sm:text-base">
-              Takes 2 minutes. Completely free. Your chat stays private.
+              Free reports. Sign in to save your results and return to them later.
             </p>
             <Link
               href="/setup"

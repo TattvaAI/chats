@@ -1,56 +1,36 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
-import { eq } from 'drizzle-orm';
 
-const connectionString = process.env.DATABASE_URL;
-
-export const db = connectionString
-  ? drizzle(postgres(connectionString, { max: 10 }), { schema })
-  : null;
-
-export async function persistReport(
-  conversationId: string,
-  previewData: Record<string, unknown>,
-  fullReportData: Record<string, unknown>
-) {
-  if (!db) {
-    console.log('[Database] DATABASE_URL not set; skipping database write in local demo mode.');
-    return { id: 'local-demo-report-id', isUnlocked: false };
-  }
-
-  try {
-    const [report] = await db
-      .insert(schema.reports)
-      .values({
-        conversationId,
-        previewData,
-        fullReportData,
-        isUnlocked: false,
-      })
-      .returning();
-
-    return report;
-  } catch (err) {
-    console.error('[Database] Failed to persist report:', err);
-    return null;
-  }
+function poolSize() {
+  const size = Number(process.env.DATABASE_POOL_MAX ?? 5);
+  return Number.isInteger(size) && size >= 1 && size <= 20 ? size : 5;
 }
 
-export async function unlockReportInDb(reportId: string) {
-  if (!db) {
-    console.log(`[Database] DATABASE_URL not set; marking report ${reportId} unlocked in memory.`);
-    return true;
-  }
+function createDatabase(connectionString: string) {
+  // Connections open on the first query, so builds need no live database.
+  // Neon's PgBouncer pooler rejects startup options like statement_timeout.
+  const isPooler = connectionString.includes('-pooler');
+  const client = postgres(connectionString, {
+    max: poolSize(), idle_timeout: 20, connect_timeout: 10, max_lifetime: 60 * 30,
+    prepare: false,
+    ...(isPooler ? {} : { connection: { options: '-c statement_timeout=30000 -c lock_timeout=10000' } }),
+    onnotice: () => undefined,
+  });
+  return { client, db: drizzle(client, { schema }) };
+}
 
-  try {
-    await db
-      .update(schema.reports)
-      .set({ isUnlocked: true })
-      .where(eq(schema.reports.id, reportId));
-    return true;
-  } catch (err) {
-    console.error('[Database] Failed to unlock report:', err);
-    return false;
-  }
+type DatabaseState = ReturnType<typeof createDatabase>;
+const globalDatabase = globalThis as typeof globalThis & { frankDatabase?: DatabaseState };
+const connectionString = process.env.DATABASE_URL;
+const state = connectionString
+  ? globalDatabase.frankDatabase ?? (globalDatabase.frankDatabase = createDatabase(connectionString))
+  : undefined;
+
+export const db = state?.db ?? null;
+
+export async function closeDatabase(): Promise<void> {
+  if (!state) return;
+  if (globalDatabase.frankDatabase === state) delete globalDatabase.frankDatabase;
+  await state.client.end({ timeout: 5 });
 }

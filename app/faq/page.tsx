@@ -3,16 +3,16 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, ChevronDown } from 'lucide-react';
-import { SiteHeader, SiteFooter } from '@/components/brandon/header';
+import { SiteHeader, SiteFooter } from '@/components/frank/header';
 
 const FAQS = [
   {
-    q: 'What is What Brandon Thinks?',
-    a: "Brandon reads a conversation, a friend group, a couple, an ex, or the family, and gives his candid opinion. It can be funny. It can be deep. It can be something to act on. It depends on the chat, and on Brandon's mood.",
+    q: 'What is What Frank Thinks?',
+    a: "Frank reads a conversation, a friend group, a couple, an ex, or the family, and gives his candid opinion. It can be funny. It can be deep. It can be something to act on. It depends on the chat, and on Frank's mood.",
   },
   {
     q: 'What kind of chats does it work on?',
-    a: 'Any. A couple, a situationship, an ex, a crush. The friends group or one best friend. The family group or just your mum. Even the work chat. If two or more people talk in it, Brandon has an opinion.',
+    a: 'Couples, friends, families and colleagues. Choose an export with 2–8 participants, text messages from at least two people, and at least 5 meaningful text messages. Exports can contain up to 15,000 entries; large files or very long messages may need shortening.',
   },
   {
     q: 'Which apps work?',
@@ -24,15 +24,19 @@ const FAQS = [
   },
   {
     q: 'How do I export an iMessage conversation?',
-    a: 'iMessage has no export button, so we made a small Mac utility. Two clicks and any conversation is exported. It needs a Mac with Apple Silicon (M1 or later).',
+    a: 'A native Frank Mac app is not available yet. Use a trusted exporter to save one conversation as text, including sender names, dates and messages. Review it before uploading and follow the supported format on our iMessage page. Do not upload your entire Messages database.',
   },
   {
     q: 'Is it free?',
-    a: 'Yes! Completely 100% free. No credit card required, no paywalls, no subscriptions. You get Brandon’s full, unfiltered report immediately.',
+    a: 'Reports and follow-up questions are currently free. No credit card or subscription is required. Usage limits apply to keep the service available.',
   },
   {
     q: 'Is my chat private?',
-    a: 'Completely. Nothing is sent to anyone in the chat. Your upload is secure and stored locally or in your account until you delete it. Nothing is used to train AI models, sold, or shared with third parties.',
+    a: 'We do not send your chat to its other participants. When you select Create report, the messages, chosen names and note are sent to our server and Google Vertex AI. Reports and follow-up questions are stored on the server. You control shared links and deletion; the Privacy page explains provider processing and retention.',
+  },
+  {
+    q: 'Will my reports still be there when I return?',
+    a: 'Yes. Reports created while signed in are saved to your account. Sign in with the same account on any device to see your previous reports and follow-up answers. If you have a guest report, use Sign in to save on its page before clearing this browser’s site data.',
   },
   {
     q: 'What is in the report?',
@@ -40,19 +44,19 @@ const FAQS = [
   },
   {
     q: 'Which languages does it understand?',
-    a: 'The chat can be in any language, or several (English, Hinglish, Spanish, French, etc.). The report is written in English, French, or Spanish, your choice.',
+    a: 'Frank can analyze multilingual chats, including mixed-language conversations such as Hinglish. Interpretation quality can vary with language and context. Choose English, French or Spanish for the report.',
   },
   {
-    q: 'Can I ask Brandon more afterwards?',
-    a: 'Yes. Every report includes a way to ask follow-up questions about the chat to dig deeper into what happened.',
+    q: 'Can I ask Frank more afterwards?',
+    a: 'Yes. Open your report’s conversation page to ask questions based on the saved report. Your questions and answers are saved with it. Shared links are read-only and do not include your follow-up history.',
   },
   {
     q: 'How long does it take?',
-    a: 'A few seconds, usually. Brandon reads the whole chat and writes your report on the spot.',
+    a: 'Reports normally take 1–3 minutes. A large export, a busy queue or provider delays can take longer. Your account keeps the request and completed report so you can return later.',
   },
   {
     q: 'How do I delete my data?',
-    a: 'From your account or the conversation page, any time: one conversation, one report, or purge everything.',
+    a: 'Delete a conversation from its page to remove all its reports, statistics, follow-up questions and shared links. From Account, you can delete your account and reports together. Downloaded or printed copies and provider backups are described on the Privacy page.',
   },
 ];
 
@@ -63,6 +67,7 @@ export function FaqAccordionItem({ q, a }: { q: string; a: string }) {
     <div className="border-b border-border py-4">
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
         className="flex w-full items-center justify-between text-left font-serif text-lg font-medium text-foreground transition-colors hover:text-primary cursor-pointer"
       >
@@ -105,9 +110,9 @@ export default function FaqPage() {
           </div>
 
           <div className="flex flex-col items-center gap-4 rounded-2xl border border-border bg-card p-8 text-center mt-6">
-            <h3 className="font-serif text-2xl font-medium">Ready to see what Brandon thinks?</h3>
+            <h3 className="font-serif text-2xl font-medium">Ready to see what Frank thinks?</h3>
             <p className="text-xs text-muted-foreground max-w-sm">
-              Upload your exported chat in two clicks. 100% free with no credit card required.
+              Sign in, choose a chat export, and create your report. No credit card required.
             </p>
             <Link
               href="/setup"

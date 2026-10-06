@@ -1,8 +1,8 @@
 import Link from 'next/link';
 import { ArrowRight, Trophy, Users, ShieldAlert } from 'lucide-react';
-import { SiteHeader, SiteFooter } from '@/components/brandon/header';
-import { Testimonials } from '@/components/brandon/testimonials';
-import { StatsBanner } from '@/components/brandon/stats-banner';
+import { SiteHeader, SiteFooter } from '@/components/frank/header';
+import { Testimonials } from '@/components/frank/testimonials';
+import { StatsBanner } from '@/components/frank/stats-banner';
 
 export default function FriendsPage() {
   return (
@@ -18,10 +18,10 @@ export default function FriendsPage() {
 
             <div className="flex flex-col items-center gap-4 max-w-2xl">
               <h1 className="font-serif text-4xl font-normal leading-[1.18] tracking-tight text-foreground sm:text-5xl lg:text-6xl text-balance">
-                What does Brandon think of you and your friends?
+                What does Frank think of you and your friends?
               </h1>
               <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-                Upload the boys&apos; group, the girls&apos; chat or ten years of messages with your best friend. Brandon roasts everyone in it, then says what nobody says out loud.
+                Upload the boys&apos; group, the girls&apos; chat or ten years of messages with your best friend. Frank roasts everyone in it, then says what nobody says out loud.
               </p>
             </div>
 
@@ -81,7 +81,7 @@ export default function FriendsPage() {
                 </div>
                 <h3 className="font-serif text-lg font-medium">The Slang Glossary</h3>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Brandon decodes your group&apos;s weird private language, inside jokes, and who started what.
+                  Frank decodes your group&apos;s weird private language, inside jokes, and who started what.
                 </p>
               </div>
             </div>

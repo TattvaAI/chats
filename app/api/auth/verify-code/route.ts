@@ -1,105 +1,41 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { randomBytes, createHash } from 'crypto';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from '@/lib/db';
-import { conversations, otpCodes, profiles, sessions } from '@/lib/db/schema';
-import { SESSION_COOKIE, SESSION_MAX_AGE } from '@/lib/auth/session';
+import { otpCodes, profiles, sessions } from '@/lib/db/schema';
+import { createSession, getSessionRawToken, SESSION_COOKIE, hashToken, sessionCookieOptions } from '@/lib/auth/session';
+import { equalSecret } from '@/lib/auth/access';
+import { privateJson, privateResponse } from '@/lib/auth/http';
+import { rateLimit, readJson, RequestError, requestFailure } from '@/lib/requests';
 
-const MAX_VERIFY_ATTEMPTS = 5;
+const inputSchema = z.object({
+  email: z.email().max(254).transform((value) => value.trim().toLowerCase()),
+  code: z.string().regex(/^\d{6}$/),
+});
 
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const { email: rawEmail, code: rawCode, claimIds: rawClaimIds } = await req.json();
-    const email =
-      typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : '';
-    const code = typeof rawCode === 'string' ? rawCode.trim() : '';
-    const UUID_RE =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const claimIds = Array.isArray(rawClaimIds)
-      ? [...new Set(rawClaimIds.filter((v): v is string => typeof v === 'string' && UUID_RE.test(v))).values()].slice(0, 20)
-      : [];
-    if (!email || !code) {
-      return NextResponse.json({ error: 'Email and code required' }, { status: 400 });
-    }
-    if (!db) {
-      return NextResponse.json({ error: 'Auth unavailable' }, { status: 500 });
-    }
-
-    const [row] = await db
-      .select()
-      .from(otpCodes)
-      .where(eq(otpCodes.email, email))
-      .limit(1);
-    if (!row) {
-      return NextResponse.json({ error: 'Invalid code' }, { status: 401 });
-    }
-
-    const attempts = row.attempts ?? 0;
-    if (attempts >= MAX_VERIFY_ATTEMPTS) {
-      return NextResponse.json({ error: 'Too many attempts' }, { status: 401 });
-    }
-    if (new Date(row.expiresAt).getTime() < Date.now()) {
-      return NextResponse.json({ error: 'Code expired' }, { status: 401 });
-    }
-    if (row.code !== code) {
-      await db
-        .update(otpCodes)
-        .set({ attempts: attempts + 1 })
-        .where(eq(otpCodes.email, email));
-      return NextResponse.json({ error: 'Invalid code' }, { status: 401 });
-    }
-
-    // Success: consume OTP, upsert profile, create session.
-    await db.delete(otpCodes).where(eq(otpCodes.email, email));
-
-    let [profile] = await db
-      .select()
-      .from(profiles)
-      .where(eq(profiles.email, email))
-      .limit(1);
-    if (!profile) {
-      const inserted = await db
-        .insert(profiles)
-        .values({ email })
-        .returning();
-      profile = inserted[0];
-    }
-
-    const rawToken = randomBytes(32).toString('hex');
-    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
-    const expiresAt = new Date(Date.now() + SESSION_MAX_AGE * 1000);
-    await db.insert(sessions).values({
-      token: tokenHash,
-      profileId: profile.id,
-      expiresAt,
-    });
-
-    // Claim anonymous funnel reports created before sign-in.
-    let claimed = 0;
-    if (claimIds.length > 0) {
-      try {
-        const updated = await db
-          .update(conversations)
-          .set({ userId: profile.id })
-          .where(and(inArray(conversations.id, claimIds), isNull(conversations.userId)))
-          .returning({ id: conversations.id });
-        claimed = updated.length;
-      } catch {
-        claimed = 0;
+    const { email, code } = inputSchema.parse(await readJson(req, 8192));
+    if (!db || !process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) throw new RequestError('Email sign-in is unavailable.', 503);
+    await rateLimit(req, 'otp-verify', 20);
+    const previous = getSessionRawToken(req.headers.get('cookie'));
+    const result = await db.transaction(async (tx) => {
+      const [row] = await tx.select().from(otpCodes).where(eq(otpCodes.email, email)).for('update');
+      if (!row || row.expiresAt <= new Date() || row.attempts >= 5) return null;
+      if (!equalSecret(row.code, hashToken(code))) {
+        await tx.update(otpCodes).set({ attempts: sql`${otpCodes.attempts} + 1` }).where(eq(otpCodes.email, email));
+        return null;
       }
-    }
-
-    const res = NextResponse.json({ ok: true, claimed });
-    res.cookies.set(SESSION_COOKIE, rawToken, {
-      httpOnly: true,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: SESSION_MAX_AGE,
-      secure: process.env.NODE_ENV === 'production',
+      await tx.delete(otpCodes).where(eq(otpCodes.email, email));
+      const [profile] = await tx.insert(profiles).values({ email })
+        .onConflictDoUpdate({ target: profiles.email, set: { email } }).returning({ id: profiles.id });
+      const { rawToken, ...session } = createSession();
+      if (previous) await tx.delete(sessions).where(eq(sessions.token, hashToken(previous)));
+      await tx.insert(sessions).values({ ...session, profileId: profile.id });
+      return { rawToken };
     });
-    return res;
-  } catch (err: unknown) {
-    console.error('Verify code error:', err);
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
-  }
+    if (!result) throw new RequestError('Invalid or expired code.', 401);
+    const response = privateJson({ ok: true });
+    response.cookies.set(SESSION_COOKIE, result.rawToken, sessionCookieOptions());
+    return response;
+  } catch (error) { return privateResponse(requestFailure(error)); }
 }

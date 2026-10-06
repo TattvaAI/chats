@@ -1,37 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { trustedOrigin, safeNext } from '@/lib/auth/access';
+import { createGoogleState, OAUTH_MAX_AGE, OAUTH_STATE_COOKIE, OAUTH_VERIFIER_COOKIE } from '@/lib/auth/google';
+import { privateJson, privateResponse } from '@/lib/auth/http';
+import { sessionCookieOptions } from '@/lib/auth/session';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const { searchParams } = new URL(req.url);
-  const next = searchParams.get('next') || '/account';
-
-  if (!clientId) {
-    // If credentials aren't set in .env.local yet, redirect with informative prompt
-    const loginUrl = new URL('/login', req.url);
-    loginUrl.searchParams.set('error', 'google_not_configured');
-    loginUrl.searchParams.set('next', next);
-    return NextResponse.redirect(loginUrl);
+  let origin: string;
+  try { origin = trustedOrigin(); }
+  catch { return privateJson({ error: 'Sign-in is not configured. Please contact support.' }, 503); }
+  const next = safeNext(new URL(req.url).searchParams.get('next'));
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+    const url = new URL('/login', origin);
+    url.searchParams.set('error', 'google_not_configured');
+    url.searchParams.set('next', next);
+    return privateResponse(NextResponse.redirect(url));
   }
-
-  const host =
-    req.headers.get('x-forwarded-host') ||
-    req.headers.get('host') ||
-    'localhost:3000';
-  const proto = req.headers.get('x-forwarded-proto') || (host.includes('localhost') ? 'http' : 'https');
-  const redirectUri = `${proto}://${host}/api/auth/callback/google`;
-
-  const state = Buffer.from(JSON.stringify({ next })).toString('base64url');
-
-  const googleAuthUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-  googleAuthUrl.searchParams.set('client_id', clientId);
-  googleAuthUrl.searchParams.set('redirect_uri', redirectUri);
-  googleAuthUrl.searchParams.set('response_type', 'code');
-  googleAuthUrl.searchParams.set('scope', 'openid email profile');
-  googleAuthUrl.searchParams.set('access_type', 'offline');
-  googleAuthUrl.searchParams.set('prompt', 'select_account');
-  googleAuthUrl.searchParams.set('state', state);
-
-  return NextResponse.redirect(googleAuthUrl.toString());
+  const { state, cookieState, verifier, challenge } = createGoogleState(next);
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.search = new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID,
+    redirect_uri: `${origin}/api/auth/callback/google`,
+    response_type: 'code', scope: 'openid email profile', prompt: 'select_account',
+    state, code_challenge: challenge, code_challenge_method: 'S256',
+  }).toString();
+  const response = privateResponse(NextResponse.redirect(url));
+  response.cookies.set(OAUTH_STATE_COOKIE, cookieState, sessionCookieOptions(OAUTH_MAX_AGE));
+  response.cookies.set(OAUTH_VERIFIER_COOKIE, verifier, sessionCookieOptions(OAUTH_MAX_AGE));
+  return response;
 }

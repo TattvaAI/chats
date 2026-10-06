@@ -1,271 +1,81 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { randomUUID, randomBytes, createHash } from 'crypto';
-import { eq } from 'drizzle-orm';
-import {
-  generateBrandonPreview,
-  generateBrandonFullReport,
-  generateBrandonPreviewFull,
-  generateBrandonFullReportFull,
-  FullChatMessage,
-} from '@/lib/ai/analyzer';
-import { ChatForensicStats } from '@/lib/forensics/metrics';
-import { TurningPointResult } from '@/lib/forensics/turning-point';
+import { after, NextRequest } from 'next/server';
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { conversations, reports, sessions, profiles } from '@/lib/db/schema';
-import { SESSION_COOKIE, SESSION_MAX_AGE } from '@/lib/auth/session';
-import { checkRateLimit } from '@/lib/rate-limit';
+import { analysisJobs, conversations, reports } from '@/lib/db/schema';
+import { currentProfile, ownsConversationWithIdentity, requireAuthentication } from '@/lib/auth/access';
+import { positiveIntegerSetting, rateLimit, readJson, RequestError, requestFailure } from '@/lib/requests';
+import { AnalysisInput } from '@/lib/ai/input';
+import { JOB_ADMISSION_LOCK, jobLimits, jobsRunInline, runAnalysisJob } from '@/lib/ai/jobs';
+import { buildFullTranscript } from '@/lib/ai/analyzer';
+import { getGeminiModel, toAIServiceError, AIServiceError } from '@/lib/ai/gemini';
 
-export const maxDuration = 60; // Allow sufficient time for LLM generation
+export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-interface AnalyzeRequestBody {
-  category: string;
-  stats: ChatForensicStats;
-  detailedStats?: Record<string, unknown>;
-  turningPoint: TurningPointResult | null;
-  transcriptSample: string;
-  messages?: FullChatMessage[];
-  userNote?: string;
-  reportLanguage?: 'en' | 'fr' | 'es';
-  conversationId?: string;
-  source?: string;
-  myName?: string;
-  email?: string;
-}
+const DAY_MS = 86_400_000;
 
 export async function POST(req: NextRequest) {
   try {
-    if (!checkRateLimit(req, { limit: 20, windowMs: 10 * 60 * 1000 })) {
-      return NextResponse.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429 });
+    if (!db) throw new RequestError('Report storage is unavailable.', 503);
+    const inline = jobsRunInline();
+    const profile = await currentProfile(req);
+    if (requireAuthentication() && !profile) throw new RequestError('Sign in before creating your report.', 401);
+    const parsed = AnalysisInput.safeParse(await readJson(req));
+    if (!parsed.success) throw new RequestError(parsed.error.issues[0]?.message || 'Please check your chat and participant names.');
+    const input = parsed.data;
+    const guestToken = req.headers.get('x-conversation-token');
+    if (!profile && (!guestToken || !/^[a-f0-9]{64}$/i.test(guestToken))) {
+      throw new RequestError('Save a new private access key in this browser before creating a report.');
     }
-    const body = (await req.json()) as AnalyzeRequestBody;
-    const { category, stats, turningPoint, transcriptSample, messages, userNote, reportLanguage = 'en', myName } = body;
-
-    if (Array.isArray(messages) && messages.length > 15000) {
-      return NextResponse.json(
-        { error: 'Message limit exceeded (max 15000).' },
-        { status: 400 }
-      );
-    }
-    if (Array.isArray(messages)) {
-      let totalChars = 0;
-      for (const m of messages) {
-        const c = (m as { content?: unknown }).content;
-        if (typeof c === 'string') {
-          totalChars += c.length;
-          if (totalChars > 4000000) break;
-        }
+    const result = await db.transaction(async tx => {
+      // The identity check and insert share the lock. A lost response can replay
+      // the same ID and capability without a second quota charge or paid job.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${JOB_ADMISSION_LOCK})`);
+      const [existing] = await tx.select().from(conversations).where(eq(conversations.id, input.conversationId)).for('update');
+      if (existing) {
+        if (!ownsConversationWithIdentity(req, existing, profile)) throw new RequestError('Conversation not found.', 404);
+        const [job] = await tx.select({ status: analysisJobs.status }).from(analysisJobs).where(eq(analysisJobs.conversationId, existing.id)).limit(1);
+        const [report] = await tx.select({ id: reports.id }).from(reports).where(and(eq(reports.conversationId, existing.id), sql`${reports.fullReportData} IS NOT NULL`)).limit(1);
+        const status = report ? 'completed' : job && ['queued', 'running', 'failed'].includes(job.status) ? job.status : 'failed';
+        return { conversationId: existing.id, jobId: existing.id, deleteToken: existing.userId === null ? existing.deleteToken ?? undefined : undefined, status };
       }
-      if (totalChars > 4000000) {
-        return NextResponse.json(
-          { error: 'Payload too large (max ~4M characters).' },
-          { status: 400 }
-        );
-      }
-    }
 
-    if (!stats || !category) {
-      return NextResponse.json(
-        { error: 'Missing required forensics stats or category.' },
-        { status: 400 }
-      );
-    }
-
-    const languageDirectives: Record<string, string> = {
-      fr: 'Language Directive: The entire report, verdicts, roasts, dossiers, awards, and advice must be written in French (Français).',
-      es: 'Language Directive: The entire report, verdicts, roasts, dossiers, awards, and advice must be written in Spanish (Español).',
-      en: '',
-    };
-    const langInstruction = languageDirectives[reportLanguage] || '';
-    const augmentedUserNote = [userNote, langInstruction].filter(Boolean).join('\n\n') || undefined;
-
-    const hasMessages = Array.isArray(messages) && messages.length > 0;
-
-    const previewPromise = (async () => {
-      if (hasMessages) {
-        try {
-          return await generateBrandonPreviewFull(
-            category,
-            stats,
-            turningPoint,
-            messages,
-            augmentedUserNote,
-            reportLanguage,
-            myName
-          );
-        } catch (err) {
-          console.warn('[route] generateBrandonPreviewFull failed, falling back to legacy path:', err);
-        }
-      }
-      return generateBrandonPreview(category, stats, turningPoint, transcriptSample, augmentedUserNote, reportLanguage, myName);
-    })();
-
-    const fullReportPromise = (async () => {
-      if (hasMessages) {
-        try {
-          return await generateBrandonFullReportFull(
-            category,
-            stats,
-            turningPoint,
-            messages,
-            augmentedUserNote,
-            reportLanguage,
-            myName
-          );
-        } catch (err) {
-          console.warn('[route] generateBrandonFullReportFull failed, falling back to legacy path:', err);
-        }
-      }
-      return generateBrandonFullReport(category, stats, turningPoint, transcriptSample, augmentedUserNote, reportLanguage, myName);
-    })();
-
-    // Run preview and full report generation in parallel
-    const [previewResult, fullReportResult] = await Promise.all([previewPromise, fullReportPromise]);
-
-    const preview = previewResult.data;
-    const fullReport = fullReportResult.data;
-    const aiLive = previewResult.live === true && fullReportResult.live === true;
-
-    let serverPersisted = false;
-    let newSessionCookie: string | null = null;
-    const clientId = body.conversationId;
-    const conversationId =
-      typeof clientId === 'string' && UUID_RE.test(clientId) ? clientId : randomUUID();
-    const deleteToken = randomUUID();
-    try {
-      if (db) {
-        let userId: string | null = null;
-
-        // 1. Check existing session cookie
-        try {
-          const raw = req.cookies.get(SESSION_COOKIE)?.value;
-          if (raw) {
-            const tokenHash = createHash('sha256').update(raw).digest('hex');
-            const [sess] = await db
-              .select()
-              .from(sessions)
-              .where(eq(sessions.token, tokenHash))
-              .limit(1);
-            if (sess && new Date(sess.expiresAt).getTime() >= Date.now()) {
-              userId = sess.profileId;
-            }
-          }
-        } catch {
-          userId = null;
-        }
-
-        // 2. If no user session yet, but user provided their email (e.g. from Step 7)
-        // Automatically create their account and log them in!
-        const userEmail = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
-        if (!userId && userEmail && userEmail.includes('@')) {
-          try {
-            let [profile] = await db
-              .select()
-              .from(profiles)
-              .where(eq(profiles.email, userEmail))
-              .limit(1);
-            if (!profile) {
-              const inserted = await db
-                .insert(profiles)
-                .values({ email: userEmail })
-                .returning();
-              profile = inserted[0];
-            }
-            if (profile) {
-              userId = profile.id;
-
-              // Generate persistent 30-day session
-              const rawToken = randomBytes(32).toString('hex');
-              const tokenHash = createHash('sha256').update(rawToken).digest('hex');
-              const expiresAt = new Date(Date.now() + SESSION_MAX_AGE * 1000);
-              await db.insert(sessions).values({
-                token: tokenHash,
-                profileId: profile.id,
-                expiresAt,
-              });
-              newSessionCookie = rawToken;
-            }
-          } catch (profileErr) {
-            console.warn('[API /api/analyze] Auto-profile creation error:', profileErr);
-          }
-        }
-
-        const source = body.source || 'unknown';
-        const participants = Array.isArray(stats.participants)
-          ? stats.participants.map((p) => p.name)
-          : [];
-        const messageCount = stats.totalMessages ?? 0;
-        const title = `${category} — ${new Date().toISOString().slice(0, 10)}`;
-        // manual-delete-only: owner-controlled deletion, no auto-expiry.
-        const expiresAt = new Date();
-        expiresAt.setFullYear(expiresAt.getFullYear() + 100);
-
-        await db
-          .insert(conversations)
-          .values({
-            id: conversationId,
-            userId,
-            title,
-            category,
-            source,
-            participants,
-            messageCount,
-            deleteToken,
-            expiresAt,
-          })
-          .onConflictDoNothing();
-
-        // Save preview, fullReport, AND stats + detailedStats in the report record
-        const envelope = {
-          preview,
-          fullReport,
-          stats,
-          detailedStats: body.detailedStats || null,
-          turningPoint: turningPoint || null,
-        };
-
-        await db.insert(reports).values({
-          conversationId,
-          previewData: envelope as unknown as Record<string, unknown>,
-          fullReportData: envelope as unknown as Record<string, unknown>,
-          isUnlocked: true,
-        });
-        serverPersisted = true;
-      }
-    } catch (persistError) {
-      console.error('API /api/analyze persistence error (non-fatal):', persistError);
-    }
-
-    const response = NextResponse.json({
-      success: true,
-      reportLanguage,
-      preview,
-      fullReport,
-      aiLive,
-      serverPersisted,
-      conversationId,
-      deleteToken,
+      getGeminiModel('report');
+      await buildFullTranscript(input.category, input.messages.filter(message => !message.isSystem));
+      const limits = jobLimits();
+      const [active] = await tx.select({ count: sql<number>`count(*)::int` }).from(analysisJobs)
+        .where(sql`${analysisJobs.status} IN ('queued', 'running')`);
+      if (active.count >= limits.active) throw new RequestError('Frank is busy reading other chats. Please try again shortly.', 429, 60);
+      const [today] = await tx.select({ count: sql<number>`count(*)::int` }).from(analysisJobs)
+        .where(sql`${analysisJobs.createdAt} >= now() - interval '24 hours'`);
+      if (today.count >= limits.daily) throw new RequestError('Today’s free report limit has been reached. Please try again tomorrow.', 429, 3600);
+      // Keep a separate global ledger so deleting a report cannot reset its cost.
+      await rateLimit(req, 'analysis-global', limits.daily, DAY_MS, { identity: 'all', transaction: tx });
+      await rateLimit(req, 'analysis-ip', positiveIntegerSetting('MAX_REPORTS_PER_IP', 10, 200), DAY_MS, { transaction: tx });
+      if (profile) await rateLimit(req, 'analysis-account', positiveIntegerSetting('MAX_REPORTS_PER_ACCOUNT', 5, 100), DAY_MS, { identity: profile.id, transaction: tx });
+      await tx.insert(conversations).values({
+        id: input.conversationId, userId: profile?.id ?? null, title: input.myName ? `${input.myName}'s conversation` : 'Chat report',
+        category: input.category, source: input.source, deleteToken: profile ? null : guestToken,
+        expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+        participants: [...new Set(input.messages.filter(message => !message.isSystem).map(message => message.sender))],
+        messageCount: input.messages.filter(message => !message.isSystem).length,
+      });
+      await tx.insert(analysisJobs).values({ id: input.conversationId, conversationId: input.conversationId, payload: input });
+      return { conversationId: input.conversationId, jobId: input.conversationId, deleteToken: profile ? undefined : guestToken, status: 'queued' };
     });
-
-    if (newSessionCookie) {
-      response.cookies.set(SESSION_COOKIE, newSessionCookie, {
-        httpOnly: true,
-        sameSite: 'lax',
-        path: '/',
-        maxAge: SESSION_MAX_AGE,
-        secure: process.env.NODE_ENV === 'production',
+    if (inline && (result.status === 'queued' || result.status === 'running')) {
+      after(async () => {
+        try { await runAnalysisJob(result.jobId); }
+        catch { console.error('[jobs] Background processing could not persist work; scheduled recovery is required.'); }
       });
     }
-
-    return response;
-  } catch (error: unknown) {
-    console.error('API /api/analyze error:', error);
-    return NextResponse.json(
-      { error: 'Failed to complete conversational analysis.' },
-      { status: 500 }
-    );
+    return Response.json(result, { status: 202, headers: { 'Cache-Control': 'private, no-store' } });
+  } catch (error) {
+    if (error instanceof AIServiceError) {
+      const failure = toAIServiceError(error);
+      return Response.json({ error: failure.message, code: failure.code }, {
+        status: failure.status, headers: { 'Cache-Control': 'private, no-store', ...(failure.status === 429 ? { 'Retry-After': '60' } : {}) },
+      });
+    }
+    return requestFailure(error);
   }
 }

@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { Suspense, useMemo, useState } from 'react';
+import { ReportLink as Link } from '@/components/frank/report-link';
+import { useParams, useSearchParams } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
-import { SiteHeader, SiteFooter } from '@/components/brandon/header';
-import { useChatStore } from '@/lib/store/useChatStore';
-import { computeDetailedStats, synthesizeDetailedStats } from '@/lib/forensics/detailed-stats';
+import { SiteHeader, SiteFooter } from '@/components/frank/header';
+import { useConversation } from '@/lib/hooks/useConversation';
+import { ReportStatus } from '@/components/frank/report-status';
 
 const MONTH_LABELS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
 
@@ -18,90 +18,18 @@ function formatHour(h: number): string {
 }
 
 export default function ConversationStatsPage() {
-  const params = useParams<{ id: string }>();
-  const id = params?.id ?? '';
-  const { stats, detailedStats, parsedMessages, loadFromLocal } = useChatStore();
-  const [status, setStatus] = useState<'loading' | 'found' | 'missing'>('loading');
+  return <Suspense><StatsInner /></Suspense>;
+}
 
-  useEffect(() => {
-    if (!id) {
-      queueMicrotask(() => setStatus('missing'));
-      return;
-    }
-    if (loadFromLocal(id)) {
-      queueMicrotask(() => setStatus('found'));
-      return;
-    }
-    let cancelled = false;
-    fetch(`/api/conversations/${encodeURIComponent(id)}`)
-      .then((r) => {
-        if (!r.ok) throw new Error('not found');
-        return r.json();
-      })
-      .then((data) => {
-        if (cancelled) return;
-        try {
-          const st = useChatStore.getState();
-          st.setConversationId(
-            typeof data?.conversationId === 'string' ? data.conversationId : id
-          );
-          const cat = data?.conversation?.category;
-          if (
-            cat === 'romantic' ||
-            cat === 'friends_group' ||
-            cat === 'friend' ||
-            cat === 'family' ||
-            cat === 'work' ||
-            cat === 'other'
-          ) {
-            st.setCategory(cat);
-          }
-          const src = data?.conversation?.source;
-          if (src === 'whatsapp' || src === 'imessage') {
-            st.setSource(src);
-          }
-          if (typeof data?.conversation?.fileName === 'string' && data.conversation.fileName) {
-            st.setUploadedChat(data.conversation.fileName, '');
-          }
-          if (data?.stats) {
-            st.setParsedData([], data.stats, data?.turningPoint ?? null, data?.detailedStats ?? null);
-          } else if (data?.detailedStats) {
-            st.setDetailedStats(data.detailedStats);
-          }
-          if (data?.preview) {
-            st.setPreview(data.preview);
-          }
-          if (data?.fullReport) {
-            st.setFullReport(data.fullReport);
-          }
-        } catch {
-          // fall through to status check below
-        }
-        setStatus(data?.stats || data?.detailedStats || data?.preview || data?.fullReport ? 'found' : 'missing');
-      })
-      .catch(() => {
-        if (!cancelled) setStatus('missing');
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
-
-  const detailed = useMemo(() => {
-    if (detailedStats) return detailedStats;
-    if (stats && parsedMessages.length > 0) {
-      try {
-        return computeDetailedStats(parsedMessages, stats);
-      } catch {
-        return synthesizeDetailedStats(stats);
-      }
-    }
-    if (stats) {
-      return synthesizeDetailedStats(stats);
-    }
-    return null;
-  }, [detailedStats, parsedMessages, stats]);
+function StatsInner() {
+  const { id } = useParams<{ id: string }>();
+  const params = useSearchParams();
+  const result = useConversation(id, params.get('report') || undefined);
+  const stats = result.data?.stats;
+  const detailed = result.data?.detailedStats;
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const years = useMemo(() => [...new Set((detailed?.calendar || []).map(day => Number(day.date.slice(0, 4))).filter(Number.isFinite))].sort((a, b) => a - b), [detailed]);
+  const year = selectedYear !== null && years.includes(selectedYear) ? selectedYear : years[years.length - 1];
 
   const dayCounts = useMemo(() => {
     const m = new Map<string, number>();
@@ -109,44 +37,10 @@ export default function ConversationStatsPage() {
     return m;
   }, [detailed]);
 
-  if (status === 'loading') {
-    return (
-      <div className="flex min-h-screen flex-col bg-background text-foreground">
-        <SiteHeader />
-        <main className="flex flex-1 items-center justify-center px-6 py-24">
-          <p className="font-mono text-xs text-muted-foreground">Loading stats…</p>
-        </main>
-        <SiteFooter />
-      </div>
-    );
-  }
-
-  if (status === 'missing') {
-    return (
-      <div className="flex min-h-screen flex-col bg-background text-foreground">
-        <SiteHeader />
-        <main className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-24 text-center">
-          <h1 className="font-serif text-2xl font-medium sm:text-3xl">Not found</h1>
-          <p className="max-w-sm text-xs text-muted-foreground">
-            No local data for this conversation on this device.
-          </p>
-          <Link
-            href="/setup"
-            className="mt-2 inline-flex min-h-[44px] items-center justify-center rounded-xl bg-primary px-6 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            Analyze a chat
-          </Link>
-        </main>
-        <SiteFooter />
-      </div>
-    );
-  }
+  if (result.status !== 'found' || !result.data) return <ReportStatus key={id} id={id} status={result.status} message={result.message} retry={result.retry} shared={Boolean(result.shareToken)} />;
 
   const names = (stats?.participants ?? []).map((p) => p.name);
-  const title = names.length > 0 ? names.join(' & ') : 'Conversation';
-  const year = detailed?.recordDay.date
-    ? Number(detailed.recordDay.date.slice(0, 4))
-    : new Date().getFullYear();
+  const title = names.length > 0 ? names.join(' & ') : result.data.conversation.title || result.data.fullReport.headline;
   const maxDay = Math.max(1, ...(detailed?.calendar.map((e) => e.count) ?? [1]));
   const maxHour = Math.max(1, ...(detailed?.hourly ?? Array(24).fill(0)));
 
@@ -156,7 +50,7 @@ export default function ConversationStatsPage() {
         <SiteHeader />
         <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-6 pt-10 pb-24 sm:pt-14">
           <Link
-            href={`/c/${id}`}
+            href={result.href()}
             className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="size-4" />
@@ -164,13 +58,13 @@ export default function ConversationStatsPage() {
           </Link>
           <h1 className="font-serif text-3xl font-medium tracking-tight sm:text-4xl">{title}</h1>
           <p className="text-sm text-muted-foreground">
-            Forensic stats are being synchronized. You can read Brandon&apos;s full report right now.
+            Detailed statistics were not stored with this report. You can still read the saved report.
           </p>
           <Link
-            href={`/c/${id}/reports/1`}
+            href={result.href(`/reports/${result.data.reportNumber}`)}
             className="inline-flex h-11 w-fit items-center justify-center rounded-xl bg-primary px-6 text-xs font-medium text-primary-foreground hover:bg-primary/90"
           >
-            Read Brandon&apos;s Report &rarr;
+            Read Frank&apos;s Report &rarr;
           </Link>
         </main>
         <SiteFooter />
@@ -183,7 +77,7 @@ export default function ConversationStatsPage() {
       <SiteHeader />
       <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-6 pt-10 pb-24 sm:pt-14">
         <Link
-          href={`/c/${id}`}
+          href={result.href()}
           className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
@@ -192,15 +86,15 @@ export default function ConversationStatsPage() {
 
         <div className="flex flex-col gap-1">
           <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-            Full stats • {Number.isFinite(year) ? year : new Date().getFullYear()}
+            Full stats · Report {result.data.reportNumber}{result.data.shared ? ' · Shared view' : ''}
           </span>
           <h1 className="font-serif text-3xl font-medium tracking-tight sm:text-4xl">{title}</h1>
         </div>
 
         {/* Yearly calendar heatmap */}
         <section className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 sm:p-7">
-          <h2 className="font-serif text-xl font-medium sm:text-2xl">Activity calendar</h2>
-          <div className="grid grid-cols-6 gap-3 sm:grid-cols-12">
+          <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-serif text-xl font-medium sm:text-2xl">Activity calendar</h2>{years.length > 0 && <label className="flex items-center gap-2 text-sm">Year<select value={year} onChange={event => setSelectedYear(Number(event.target.value))} className="rounded-lg border border-border bg-background px-3 py-2">{years.map(value => <option key={value} value={value}>{value}</option>)}</select></label>}</div>
+          {years.length === 0 ? <p className="text-sm text-muted-foreground">Daily activity was not stored with this report.</p> : <div className="grid grid-cols-6 gap-3 sm:grid-cols-12">
             {MONTH_LABELS.map((label, m) => {
               const daysInMonth = new Date(year, m + 1, 0).getDate();
               return (
@@ -228,7 +122,7 @@ export default function ConversationStatsPage() {
                 </div>
               );
             })}
-          </div>
+          </div>}
         </section>
 
         {/* Who talks, who starts */}
@@ -269,7 +163,7 @@ export default function ConversationStatsPage() {
               <p className="mt-1 text-sm font-semibold">{detailed.longestSilenceDays} days</p>
             </div>
             <div className="rounded-xl border border-border bg-muted/30 p-3">
-              <span className="font-mono text-[11px] uppercase text-muted-foreground">After 10pm</span>
+              <span className="font-mono text-[11px] uppercase text-muted-foreground">10pm–6am</span>
               <p className="mt-1 text-sm font-semibold">
                 {detailed.after10pmPct}% • peak {formatHour(detailed.peakHour)}
               </p>
@@ -279,7 +173,7 @@ export default function ConversationStatsPage() {
             <div className="flex flex-col gap-1">
               {detailed.perPerson.map((p) => (
                 <p key={p.name} className="font-mono text-xs text-muted-foreground">
-                  {p.name}: median reply {p.medianReplyMin}m
+                  {p.name}: median reply {p.medianReplyMin == null ? 'not available' : `${p.medianReplyMin}m`}
                 </p>
               ))}
             </div>
@@ -291,7 +185,7 @@ export default function ConversationStatsPage() {
                 <div key={h} className="flex flex-1 flex-col items-center gap-1">
                   <div
                     title={`${formatHour(h)}: ${c}`}
-                    style={{ height: `${Math.max(4, (c / maxHour) * 64)}px` }}
+                    style={{ height: `${c > 0 ? Math.max(2, (c / maxHour) * 64) : 0}px` }}
                     className="w-full rounded-sm bg-primary"
                   />
                   {h % 3 === 0 && (

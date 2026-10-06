@@ -3,20 +3,22 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { CheckCircle2, MessageSquareHeart, Sparkles } from 'lucide-react';
-import { SiteHeader, SiteFooter } from '@/components/brandon/header';
+import { SiteHeader, SiteFooter } from '@/components/frank/header';
 
 export default function FeedbackPage() {
   const [feedback, setFeedback] = useState('');
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [error,setError]=useState('');
+  const [sending,setSending]=useState(false);
 
   const minChars = 15;
   const remaining = Math.max(0, minChars - feedback.trim().length);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (remaining > 0) return;
-    setSubmitted(true);
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();if(sending)return;setSending(true);setError('');
+    try{const res=await fetch('/api/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'feedback',email,message:feedback})});const data=await res.json();if(!res.ok)throw new Error(data.error);setSubmitted(true);}
+    catch(e){setError(e instanceof Error?e.message:'Your message could not be saved.');}finally{setSending(false);}
   };
 
   return (
@@ -30,7 +32,7 @@ export default function FeedbackPage() {
               Give us feedback!
             </h1>
             <p className="text-sm text-muted-foreground leading-relaxed">
-              What do you think of What Brandon Thinks? How could we make it better? Any random ideas? The team reads every single message.
+              What do you think of What Frank Thinks? Share what worked, what fell flat, or an idea for improving it.
             </p>
           </div>
 
@@ -38,13 +40,14 @@ export default function FeedbackPage() {
           <div className="flex items-center gap-3 rounded-2xl border border-emerald-200/80 bg-emerald-50/70 p-4 text-emerald-950 text-sm">
             <Sparkles className="size-5 shrink-0 text-emerald-600" />
             <div>
-              <span className="font-medium">100% Free Forever. </span>
+              <span className="font-medium">Free to use. </span>
               <span className="text-emerald-800">
-                What Brandon Thinks is completely free — no paywalls, subscriptions, or credit cards required.
+                What Frank Thinks is completely free — no paywalls, subscriptions, or credit cards required.
               </span>
             </div>
           </div>
 
+          {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
           {submitted ? (
             <div className="flex flex-col items-center gap-4 rounded-3xl border border-border bg-card p-8 text-center shadow-xs">
               <div className="flex size-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
@@ -53,24 +56,27 @@ export default function FeedbackPage() {
               <div className="flex flex-col gap-1.5">
                 <h2 className="font-serif text-2xl font-medium">Thank you! 🙏</h2>
                 <p className="text-sm text-muted-foreground max-w-md">
-                  Your feedback is in. The team reads every message to make Brandon sharper, funnier, and more insightful.
+                  Your feedback has been saved for review. Thank you for helping us improve Frank.
                 </p>
               </div>
               <Link
                 href="/"
                 className="mt-4 inline-flex h-11 items-center justify-center rounded-xl bg-primary px-6 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-all"
               >
-                Back to Brandon
+                Back to Frank
               </Link>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="flex flex-col gap-5 rounded-3xl border border-border bg-card p-6 sm:p-8 shadow-xs">
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-foreground">
+                <label htmlFor="feedback-email" className="text-xs font-medium text-foreground">
                   Your email <span className="text-muted-foreground">(optional, if you want a reply)</span>
                 </label>
                 <input
+                  id="feedback-email"
                   type="email"
+                  autoComplete="email"
+                  maxLength={254}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
@@ -80,7 +86,7 @@ export default function FeedbackPage() {
 
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-medium text-foreground">Your feedback</label>
+                  <label htmlFor="feedback-message" className="text-xs font-medium text-foreground">Your feedback</label>
                   {remaining > 0 ? (
                     <span className="text-xs text-muted-foreground">
                       {remaining} more character{remaining === 1 ? '' : 's'}
@@ -90,7 +96,10 @@ export default function FeedbackPage() {
                   )}
                 </div>
                 <textarea
+                  id="feedback-message"
                   required
+                  minLength={minChars}
+                  maxLength={5000}
                   rows={6}
                   value={feedback}
                   onChange={(e) => setFeedback(e.target.value)}
@@ -100,8 +109,7 @@ export default function FeedbackPage() {
               </div>
 
               <button
-                type="submit"
-                disabled={remaining > 0}
+                type="submit" disabled={sending || remaining > 0}
                 className="mt-2 inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-primary px-6 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <MessageSquareHeart className="size-4" />

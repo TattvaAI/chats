@@ -1,4 +1,5 @@
 import type { ParsedMessage } from '../parser/whatsapp';
+import { isDeletedPlaceholder } from '../parser/whatsapp';
 import type { ChatForensicStats } from './metrics';
 
 export interface DetailedStats {
@@ -8,7 +9,7 @@ export interface DetailedStats {
     messageCount: number;
     sharePct: number;
     initiationPct: number;
-    medianReplyMin: number;
+    medianReplyMin: number | null;
     topWords: { word: string; count: number }[];
     topEmojis: { emoji: string; count: number }[];
   }[];
@@ -52,12 +53,12 @@ function pad2(n: number): string {
 }
 
 function localDayKey(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
 }
 
 function parseDayKey(key: string): Date {
   const [y, m, d] = key.split('-').map((p) => parseInt(p, 10));
-  return new Date(y, m - 1, d);
+  return new Date(Date.UTC(y, m - 1, d));
 }
 
 function cleanForWords(content: string): string {
@@ -72,7 +73,7 @@ export function computeDetailedStats(
   messages: ParsedMessage[],
   base: ChatForensicStats,
 ): DetailedStats {
-  const userMessages = messages.filter((m) => !m.isSystem && m.sender !== 'System');
+  const userMessages = messages.filter((m) => !m.isSystem && !m.isReaction);
   const total = userMessages.length;
 
   const empty: DetailedStats = {
@@ -95,10 +96,10 @@ export function computeDetailedStats(
   for (const m of userMessages) {
     const key = localDayKey(m.timestamp);
     dayCounts.set(key, (dayCounts.get(key) ?? 0) + 1);
-    const h = m.timestamp.getHours();
+    const h = m.timestamp.getUTCHours();
     if (h >= 0 && h < 24) {
       hourly[h]++;
-      if (h >= 22) after10pm++;
+      if (h >= 22 || h < 6) after10pm++;
     }
   }
 
@@ -168,11 +169,12 @@ export function computeDetailedStats(
     const sharePct =
       baseP?.messageSharePercentage ?? (total > 0 ? Math.round((ownMsgs.length / total) * 100) : 0);
     const initiationPct = baseP?.initiationPercentage ?? 0;
-    const medianReplyMin = baseP?.medianResponseTimeMinutes ?? 0;
+    const medianReplyMin = baseP?.medianResponseTimeMinutes ?? null;
 
     // topWords
     const wordCounts = new Map<string, number>();
     for (const m of ownMsgs) {
+      if (m.isDeleted || isDeletedPlaceholder(m.content)) continue;
       const cleaned = cleanForWords(m.content);
       const tokens = cleaned.match(/[\p{L}\p{N}']+/gu) ?? [];
       for (const raw of tokens) {
@@ -219,61 +221,7 @@ export function computeDetailedStats(
   };
 }
 
+/** Missing source data stays empty. Never invent a chart or a favourite word. */
 export function synthesizeDetailedStats(base: ChatForensicStats): DetailedStats {
-  const participants = base?.participants ?? [];
-  const total = base?.totalMessages || 1;
-  const peakHour = typeof base?.mostActiveHour === 'number' ? base.mostActiveHour : 22;
-
-  const hourly = new Array(24).fill(0).map((_, h) => {
-    const diff = Math.abs(h - peakHour);
-    const weight = Math.max(1, 10 - Math.min(diff, 24 - diff));
-    return Math.max(1, Math.round((weight / 100) * total));
-  });
-
-  const now = new Date();
-  const calendar: { date: string; count: number }[] = [];
-  const days = Math.max(14, Math.min(base?.dateRange?.durationDays || 30, 90));
-  for (let i = days; i >= 0; i--) {
-    const d = new Date(now.getTime() - i * 86400000);
-    const dateStr = localDayKey(d);
-    const count = Math.max(1, Math.round((total / days) * (0.6 + (i % 5) * 0.15)));
-    calendar.push({ date: dateStr, count });
-  }
-
-  const maxCal = calendar.reduce(
-    (max, c) => (c.count > max.count ? c : max),
-    { date: localDayKey(now), count: Math.max(1, Math.round(total * 0.08)) }
-  );
-
-  const perPerson = participants.map((p) => {
-    const topWords = [
-      { word: 'yeah', count: Math.max(1, Math.round(p.messageCount * 0.08)) },
-      { word: 'okay', count: Math.max(1, Math.round(p.messageCount * 0.06)) },
-      { word: 'really', count: Math.max(1, Math.round(p.messageCount * 0.05)) },
-    ];
-    const topEmojis = (p.topEmojis && p.topEmojis.length > 0 ? p.topEmojis : ['😂', '❤️', '👀'])
-      .slice(0, 3)
-      .map((emoji, idx) => ({ emoji, count: Math.max(1, 12 - idx * 3) }));
-
-    return {
-      name: p.name,
-      messageCount: p.messageCount,
-      sharePct: p.messageSharePercentage,
-      initiationPct: p.initiationPercentage,
-      medianReplyMin: p.medianResponseTimeMinutes,
-      topWords,
-      topEmojis,
-    };
-  });
-
-  return {
-    calendar,
-    perPerson,
-    recordDay: maxCal,
-    streakDays: Math.min(days, Math.max(3, Math.round(days * 0.4))),
-    longestSilenceDays: Math.max(1, Math.round(days * 0.12)),
-    hourly,
-    after10pmPct: participants[0]?.nightOwlPercentage ?? 35,
-    peakHour,
-  };
+  return computeDetailedStats([], base);
 }

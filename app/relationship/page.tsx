@@ -1,8 +1,8 @@
 import Link from 'next/link';
 import { ArrowRight, HeartCrack, Flame, Compass, MessageCircleHeart } from 'lucide-react';
-import { SiteHeader, SiteFooter } from '@/components/brandon/header';
-import { Testimonials } from '@/components/brandon/testimonials';
-import { StatsBanner } from '@/components/brandon/stats-banner';
+import { SiteHeader, SiteFooter } from '@/components/frank/header';
+import { Testimonials } from '@/components/frank/testimonials';
+import { StatsBanner } from '@/components/frank/stats-banner';
 
 export default function RelationshipPage() {
   return (
@@ -29,7 +29,7 @@ export default function RelationshipPage() {
                 What does he <span className="italic font-serif">actually</span> think of you?
               </h1>
               <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-                Brandon reads every message and writes what was real, what changed, and what to do now.
+                Frank reads every message and writes what was real, what changed, and what to do now.
               </p>
             </div>
 
@@ -61,7 +61,7 @@ export default function RelationshipPage() {
         <section className="w-full border-t border-border bg-card py-20 px-6 sm:px-10">
           <div className="mx-auto flex max-w-5xl flex-col items-center gap-12">
             <h2 className="text-center font-serif text-3xl font-medium tracking-tight sm:text-4xl">
-              What Brandon reveals in relationship chats
+              What Frank reveals in relationship chats
             </h2>
 
             <div className="grid w-full grid-cols-1 gap-6 sm:grid-cols-3">
@@ -71,7 +71,7 @@ export default function RelationshipPage() {
                 </div>
                 <h3 className="font-serif text-lg font-medium">The Exact Week It Changed</h3>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Brandon pinpoints the exact week the energy shifted, response times widened, and the excuses started.
+                  Frank pinpoints the exact week the energy shifted, response times widened, and the excuses started.
                 </p>
               </div>
 
@@ -91,7 +91,7 @@ export default function RelationshipPage() {
                 </div>
                 <h3 className="font-serif text-lg font-medium">The Practical Advice</h3>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Brandon tells you exactly what to send next—or gives you the strict order to leave them on read.
+                  Frank tells you exactly what to send next—or gives you the strict order to leave them on read.
                 </p>
               </div>
             </div>

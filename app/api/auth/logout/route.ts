@@ -1,28 +1,23 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createHash } from 'crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { sessions } from '@/lib/db/schema';
-import { SESSION_COOKIE } from '@/lib/auth/session';
+import { privateJson } from '@/lib/auth/http';
+import { getSessionRawToken, hashToken, SESSION_COOKIE, sessionCookieOptions } from '@/lib/auth/session';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
+  const raw = getSessionRawToken(req.headers.get('cookie'));
   try {
-    const raw = req.cookies.get(SESSION_COOKIE)?.value;
-    if (raw && db) {
-      const tokenHash = createHash('sha256').update(raw).digest('hex');
-      await db.delete(sessions).where(eq(sessions.token, tokenHash));
+    if (raw) {
+      if (!db) throw new Error('Storage unavailable');
+      await db.delete(sessions).where(eq(sessions.token, hashToken(raw)));
     }
-  } catch (err) {
-    console.error('Logout error:', err);
+    const response = privateJson({ ok: true });
+    response.cookies.set(SESSION_COOKIE, '', sessionCookieOptions(0));
+    return response;
+  } catch {
+    // Keep the cookie until revocation succeeds, so the browser can retry.
+    return privateJson({ error: 'Sign-out could not be completed. Please try again.' }, 503);
   }
-  const res = NextResponse.json({ ok: true });
-  res.cookies.set(SESSION_COOKIE, '', {
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 0,
-  });
-  return res;
 }

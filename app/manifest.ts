@@ -2,8 +2,8 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'What Brandon Thinks',
-    short_name: 'Brandon',
+    name: 'What Frank Thinks',
+    short_name: 'Frank',
     description: "AI reports on your group chats — drop in a WhatsApp or iMessage chat and get a real take on what's going on.",
     start_url: '/',
     display: 'standalone',

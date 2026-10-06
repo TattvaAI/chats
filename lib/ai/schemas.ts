@@ -2,18 +2,20 @@ import { z } from 'zod';
 
 // Chat speech bubble schema
 export const ChatBubbleQuoteSchema = z.object({
+  messageId: z.string().optional().describe('Exact source messageId from the transcript'),
+  at: z.string().optional().describe('Source timestamp, populated by the server'),
   sender: z.string().describe('Sender of the text message'),
   text: z.string().describe('Verbatim message text (including emojis)'),
 });
 export type ChatBubbleQuote = z.infer<typeof ChatBubbleQuoteSchema>;
 
-// Scene reaction in "Brandon Reacts: Reading This in Real Time"
+// Scene reaction in "Frank Reacts: Reading This in Real Time"
 export const RealTimeReactionSceneSchema = z.object({
   number: z.number().describe('Scene number (1, 2, 3...)'),
-  title: z.string().describe('Catchy scene title (e.g. "The Deleted Message Epidemic", "The Dark Picture Stunt")'),
-  narrative: z.string().describe('Setting the scene with specific dates, context, and what Brandon observed'),
+  title: z.string().describe('A short, playful title grounded in the quoted exchange'),
+  narrative: z.string().describe('Setting the scene with specific dates, context, and what Frank observed'),
   quotes: z.array(ChatBubbleQuoteSchema).describe('Verbatim message lines to be rendered as speech bubbles'),
-  reaction: z.string().describe("Brandon's honest, hilarious, human reaction (e.g. facepalm, yelling at screen, decoding defense mechanism)"),
+  reaction: z.string().describe("Frank's warm, witty reaction to the observable exchange, with interpretations framed as possibilities"),
 });
 export type RealTimeReactionScene = z.infer<typeof RealTimeReactionSceneSchema>;
 
@@ -21,16 +23,17 @@ export type RealTimeReactionScene = z.infer<typeof RealTimeReactionSceneSchema>;
 export const MetaphorSectionSchema = z.object({
   emoji: z.string().default('🎪'),
   title: z.string().describe('Metaphor section title (e.g. "The Safety Net and the Smoke Alarm")'),
-  tagline: z.string().describe('One bold thematic sentence summarizing the core dynamic'),
-  paragraphs: z.array(z.string()).describe('3-5 rich, warm, deeply perceptive paragraphs exploring the dynamic without clinical jargon'),
+  tagline: z.string().describe('One bold thematic sentence summarizing the core situation'),
+  paragraphs: z.array(z.string()).describe('3-5 rich, warm, deeply perceptive paragraphs exploring what is happening without clinical jargon'),
 });
 export type MetaphorSection = z.infer<typeof MetaphorSectionSchema>;
 
 // Dialect item
 export const DialectItemSchema = z.object({
+  messageId: z.string().optional().describe('Exact source messageId for this quote'),
   term: z.string().describe('Inside joke, nickname, repeated slang, Hinglish/local phrase, or coded word'),
   meaning: z.string().describe('What it literally or functionally means'),
-  subtext: z.string().describe('What it actually signals emotionally (affection, panic, deflecting, intimacy)'),
+  subtext: z.string().describe('A possible reading supported by the exchange, without claiming hidden feelings'),
   quote: z.string().describe('Verbatim quote demonstrating its usage'),
 });
 export type DialectItem = z.infer<typeof DialectItemSchema>;
@@ -38,7 +41,7 @@ export type DialectItem = z.infer<typeof DialectItemSchema>;
 // Linguistic Decoding Section
 export const PrivateDialectSchema = z.object({
   emoji: z.string().default('🔍'),
-  title: z.string().default('Linguistic Decoding: Your Private Dialect'),
+  title: z.string().default('Your private language'),
   intro: z.string().describe('Introductory commentary on how their private vocabulary works'),
   entries: z.array(DialectItemSchema).describe('3-6 decoded terms and inside jokes'),
 });
@@ -48,10 +51,10 @@ export type PrivateDialect = z.infer<typeof PrivateDialectSchema>;
 export const PairProfileItemSchema = z.object({
   name: z.string(),
   roleTitle: z.string().describe('Character title (e.g. "The Reluctant Vampire", "The Overthinking Softie")'),
-  theFacade: z.string().describe('The character/mask they present in the chat'),
-  theReality: z.string().describe('Who they actually are underneath'),
-  signatureMove: z.string().describe('Their signature texting habit or emergency tell'),
-  vulnerabilityTell: z.string().describe('How they secretly signal care or emotion without admitting it'),
+  theFacade: z.string().describe('How this participant presents themselves in the messages'),
+  theReality: z.string().describe('What their repeated messages support; separate observations from uncertain interpretations'),
+  signatureMove: z.string().describe('A distinctive texting habit observable in the transcript'),
+  vulnerabilityTell: z.string().describe('An observable way they discuss uncertainty or care, or an honest statement that evidence is limited'),
 });
 export type PairProfileItem = z.infer<typeof PairProfileItemSchema>;
 
@@ -65,12 +68,12 @@ export type PairProfile = z.infer<typeof PairProfileSchema>;
 // Yelp Review Format
 export const YelpReviewSchema = z.object({
   emoji: z.string().default('⭐'),
-  title: z.string().describe('e.g. "The Yelp Review: The Shivansh & Bhawna Dynamic"'),
+  title: z.string().describe('A playful review title using the supplied participant names'),
   stars: z.number().min(1).max(5).default(4),
   ambiance: z.string().describe('The emotional atmosphere and environment they build together'),
   service: z.string().describe('Responsiveness, attentiveness, and who is serving whom'),
   menu: z.string().describe('What is on offer (banter, late-night crises, reels, selective silence)'),
-  verdict: z.string().describe("Brandon's final Yelp summary verdict"),
+  verdict: z.string().describe("Frank's final Yelp summary verdict"),
 });
 export type YelpReview = z.infer<typeof YelpReviewSchema>;
 
@@ -78,16 +81,16 @@ export type YelpReview = z.infer<typeof YelpReviewSchema>;
 export const TurningPointMomentSchema = z.object({
   dateOrPeriod: z.string().describe('Specific date or timeframe (e.g. "Around April 14th", "May 7th")'),
   momentTitle: z.string().describe('Title of the turning point'),
-  whatHappened: z.string().describe('The story of what shifted and when the mask slipped'),
+  whatHappened: z.string().describe('What visibly changed in the quoted exchange'),
   keyExchange: z.array(ChatBubbleQuoteSchema).optional().describe('Key quote exchange during this moment'),
-  impact: z.string().describe('How this permanently altered the chat rhythm'),
+  impact: z.string().describe('What the available messages show afterward; do not assume a permanent change'),
 });
 export type TurningPointMoment = z.infer<typeof TurningPointMomentSchema>;
 
 export const TurningPointsSectionSchema = z.object({
   emoji: z.string().default('🕰️'),
-  title: z.string().default('The Turning Points: When the Subtext Leaked'),
-  points: z.array(TurningPointMomentSchema).describe('2-4 pivotal moments where subtext leaked'),
+  title: z.string().default('The Turning Points'),
+  points: z.array(TurningPointMomentSchema).describe('2-4 notable changes supported by specific messages'),
 });
 export type TurningPointsSection = z.infer<typeof TurningPointsSectionSchema>;
 
@@ -95,10 +98,10 @@ export type TurningPointsSection = z.infer<typeof TurningPointsSectionSchema>;
 export const PracticalAdviceSchema = z.object({
   emoji: z.string().default('🎟️'),
   title: z.string().default('The Advice'),
-  directTake: z.string().describe("Brandon's direct, warm, loving advice addressing the reader by first name"),
+  directTake: z.string().describe("Frank's direct, warm, loving advice addressing the reader by first name"),
   whatToText: z.string().describe('The exact recommended text message to send (or strict directive to send nothing)'),
-  whatToStopDoing: z.string().describe('Habits, excuses, dramatic exits, or panic deletions to immediately stop'),
-  brandonClosing: z.string().describe("Brandon's witty, memorable closing parting line"),
+  whatToStopDoing: z.string().describe('One practical adjustment supported by observed texting habits; do not infer the contents or motives of deleted messages'),
+  brandonClosing: z.string().describe("Frank's witty, memorable closing parting line"),
 });
 export type PracticalAdvice = z.infer<typeof PracticalAdviceSchema>;
 
@@ -107,8 +110,8 @@ export const GrandMetaphorSchema = z.object({
   intro: z.string().describe('Direct address to reader by name setting the extended central metaphor'),
   roleReader: z.string().describe('The role the reader plays, quoting their specific quirks and lines'),
   roleOther: z.string().describe('The role the other person plays, quoting their specific quirks and lines'),
-  dynamicSummary: z.string().describe('How they spend their time (e.g. 60% baiting into arguments, 60% deleting messages)'),
-  closingPunchline: z.string().describe('Short hook into the report (e.g. "Let’s unpack the whole thing.")'),
+  dynamicSummary: z.string().describe('A plain-language summary of recurring exchanges, without invented numerical breakdowns'),
+  closingPunchline: z.string().describe('Short hook into the report (e.g. "Let\'s unpack the whole thing.")'),
 });
 export type GrandMetaphor = z.infer<typeof GrandMetaphorSchema>;
 
@@ -118,10 +121,10 @@ export const FreePreviewSchema = z.object({
   subheading: z.string().describe('Subheadline cutting right to the chase'),
   verdictTag: z.string().describe('A 2-4 word theme label (e.g. "High-Stakes Theater", "Standby Mode")'),
   grandMetaphor: GrandMetaphorSchema.optional(),
-  teaserVerdict: z.string().describe("Brandon's opening verdict that hooks the reader with direct address"),
+  teaserVerdict: z.string().describe("Frank's opening verdict that hooks the reader with direct address"),
   previewHighlights: z.array(z.string()).describe('3-5 key observations or numbers from the chat'),
   lockedSections: z.array(z.string()).default([
-    'Brandon Reacts: Reading This in Real Time 🎬',
+    'Frank Reacts: Reading This in Real Time 🎬',
     'The Metaphor 🎪',
     'Linguistic Decoding: Your Private Dialect 🔍',
     'Profile of the Pair 🪞',
@@ -132,8 +135,8 @@ export const FreePreviewSchema = z.object({
 });
 export type FreePreview = z.infer<typeof FreePreviewSchema>;
 
-// Comprehensive Brandon Report Schema
-export const BrandonReportSchema = z.object({
+// Comprehensive Frank Report Schema
+export const FrankReportSchema = z.object({
   headline: z.string().describe('Editorial headline (e.g. "The Comedy Club Built Over an Open Heart")'),
   subheading: z.string().describe('Witty, cutting summary subhead'),
   verdictTag: z.string().describe('Catchy categorical label'),
@@ -147,7 +150,7 @@ export const BrandonReportSchema = z.object({
   practicalAdvice: PracticalAdviceSchema,
 
   // Backwards-compatibility legacy fields
-  brutalityScore: z.number().optional().default(8.5),
+  brutalityScore: z.number().optional(),
   fullVerdict: z.string().optional().describe('Legacy full verdict text'),
   theDynamic: z.object({
     powerBalance: z.string(),
@@ -205,6 +208,10 @@ export const BrandonReportSchema = z.object({
   }).optional(),
 });
 
-export type BrandonReport = z.infer<typeof BrandonReportSchema>;
-export type FullReport = BrandonReport;
-export const FullReportSchema = BrandonReportSchema;
+export type FrankReport = z.infer<typeof FrankReportSchema>;
+
+// Backward compatibility aliases
+export type BrandonReport = FrankReport;
+export type FullReport = FrankReport;
+export const BrandonReportSchema = FrankReportSchema;
+export const FullReportSchema = FrankReportSchema;

@@ -1,95 +1,47 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { eq } from 'drizzle-orm';
-import { Resend } from 'resend';
+import { randomInt } from 'node:crypto';
+import { and, eq, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from '@/lib/db';
 import { otpCodes } from '@/lib/db/schema';
+import { hashToken } from '@/lib/auth/session';
+import { privateJson, privateResponse } from '@/lib/auth/http';
+import { rateLimit, readJson, RequestError, requestFailure } from '@/lib/requests';
 
-const MAX_SENDS_PER_HOUR = 5;
-const CODE_TTL_MS = 15 * 60 * 1000;
+export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const { email: rawEmail } = await req.json();
-    const email =
-      typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : '';
-    if (!email || !email.includes('@')) {
-      return NextResponse.json({ error: 'Valid email required' }, { status: 400 });
-    }
-
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const { email } = z.object({ email: z.email().max(254).transform((value) => value.trim().toLowerCase()) }).parse(await readJson(req, 4096));
+    if (!db || !process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) throw new RequestError('Email sign-in is not configured. Use Google sign-in if available.', 503);
+    await rateLimit(req, 'otp-send', 5, 3_600_000);
+    await rateLimit(req, 'otp-send-email', 5, 3_600_000, { identity: `email:${email}` });
+    await rateLimit(req, 'otp-send-global', 1000, 86_400_000, { identity: 'global' });
+    const code = String(randomInt(100000, 1000000));
+    const codeHash = hashToken(code);
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + CODE_TTL_MS);
-
-    if (db) {
-      const [existing] = await db
-        .select()
-        .from(otpCodes)
-        .where(eq(otpCodes.email, email))
-        .limit(1);
-
-      if (existing) {
-        const lastSent = existing.lastSentAt
-          ? new Date(existing.lastSentAt).getTime()
-          : 0;
-        const windowStart = existing.lastSentAt
-          ? lastSent
-          : new Date(existing.createdAt).getTime();
-        const withinHour = now.getTime() - windowStart < 60 * 60 * 1000;
-        // sendCount tracks sends in the current 1h window; reset when window elapsed.
-        const countInWindow = withinHour ? (existing.sendCount ?? 0) : 0;
-        if (withinHour && countInWindow >= MAX_SENDS_PER_HOUR) {
-          return NextResponse.json(
-            { error: 'Too many codes requested. Try again later.' },
-            { status: 429 }
-          );
-        }
-        const nextCount = withinHour ? countInWindow + 1 : 1;
-        await db
-          .update(otpCodes)
-          .set({
-            code,
-            expiresAt,
-            attempts: 0,
-            sendCount: nextCount,
-            lastSentAt: now,
-          })
-          .where(eq(otpCodes.email, email));
-      } else {
-        await db.insert(otpCodes).values({
-          email,
-          code,
-          expiresAt,
-          attempts: 0,
-          sendCount: 1,
-          lastSentAt: now,
-        });
-      }
-    } else {
-      console.log(`[Auth OTP] (no DB) Verification code for ${email}: ${code}`);
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'otp-send:' + email}))`);
+      const [previous] = await tx.select({ lastSentAt: otpCodes.lastSentAt }).from(otpCodes).where(eq(otpCodes.email, email)).for('update');
+      if (previous && previous.lastSentAt.getTime() > now.getTime() - 60_000) throw new RequestError('Please wait a minute before requesting another code.', 429, 60);
+      await tx.insert(otpCodes).values({ email, code: codeHash, expiresAt: new Date(now.getTime() + 900_000), attempts: 0, lastSentAt: now })
+        .onConflictDoUpdate({ target: otpCodes.email, set: { code: codeHash, expiresAt: new Date(now.getTime() + 900_000), attempts: 0, lastSentAt: now } });
+    });
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: process.env.EMAIL_FROM, to: [email], subject: `${code} is your Frank sign-in code`,
+          text: `Your sign-in code is ${code}. It expires in 15 minutes. If you did not request this email, ignore it.`,
+        }),
+      });
+      if (!response.ok) throw new Error('Delivery failed');
+      await response.body?.cancel();
+    } catch {
+      // Do not delete a newer code if another request completed while the provider was slow.
+      await db.delete(otpCodes).where(and(eq(otpCodes.email, email), eq(otpCodes.code, codeHash)));
+      throw new RequestError('The sign-in email could not be sent. Please try again.', 502);
     }
-
-    // Keep console.log fallback for local dev without a Resend key.
-    console.log(`[Auth OTP] Verification code for ${email}: ${code}`);
-
-    const resendKey = process.env.RESEND_API_KEY;
-    if (resendKey) {
-      try {
-        const resend = new Resend(resendKey);
-        await resend.emails.send({
-          from: 'Brandon <login@whatbrandonthinks.com>',
-          to: email,
-          subject: `${code} is your What Brandon Thinks sign-in code`,
-          text: `Your sign-in code for What Brandon Thinks is ${code}. It expires in 15 minutes.`,
-        });
-      } catch (sendErr) {
-        console.error('Resend send error (code already stored):', sendErr);
-        // Still return success since code is stored and logged for dev.
-      }
-    }
-
-    return NextResponse.json({ success: true, message: 'Code sent' });
-  } catch (err: unknown) {
-    console.error('Send code error:', err);
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
-  }
+    return privateJson({ success: true });
+  } catch (error) { return privateResponse(requestFailure(error)); }
 }

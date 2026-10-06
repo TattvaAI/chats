@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: chats-web
+    runtime: node
+    plan: starter
+    region: singapore
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 24.0.0
+      - key: JOB_EXECUTION_MODE
+        value: worker
+      - key: TRUSTED_PROXY
+        value: none
+      - key: REQUIRE_AUTH
+        value: "true"
+      - fromGroup: chats-shared-env
+
+  - type: worker
+    name: chats-worker
+    runtime: node
+    plan: starter
+    region: singapore
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/worker.cjs
+    envVars:
+      - key: NODE_VERSION
+        value: 24.0.0
+      - key: JOB_EXECUTION_MODE
+        value: worker
+      - fromGroup: chats-shared-env
+
+envVarGroups:
+  - name: chats-shared-env
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_UNPOOLED
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_GENERATIVE_AI_API_KEY
+        sync: false
+      - key: VERTEX_API_KEY
+        sync: false
+      - key: GEMINI_API
+        value: vertex
+      - key: GEMINI_REPORT_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_FOLLOWUP_MODEL
+        value: gemini-3.1-flash-lite
+      - key: GEMINI_SUMMARY_MODEL
+        value: gemini-3.1-flash-lite
+      - key: APP_URL
+        sync: false

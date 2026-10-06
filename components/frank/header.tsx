@@ -11,8 +11,8 @@ export function SiteHeader() {
         >
           <span className="relative block size-8 sm:size-9 overflow-hidden rounded-full ring-2 ring-black/5">
             <Image
-              src="/images/brandon/avatar.webp"
-              alt="Brandon"
+              src="/images/frank/avatar.webp"
+              alt="Frank"
               width={40}
               height={40}
               className="size-full object-cover"
@@ -20,7 +20,7 @@ export function SiteHeader() {
             />
           </span>
           <span className="font-serif text-2xl leading-none tracking-tight sm:text-3xl">
-            Brandon
+            Frank
           </span>
         </Link>
 
@@ -52,13 +52,13 @@ export function SiteFooter() {
           className="flex items-center gap-2 transition-opacity hover:opacity-80"
         >
           <Image
-            src="/images/brandon/avatar.webp"
-            alt="Brandon"
+            src="/images/frank/avatar.webp"
+            alt="Frank"
             width={28}
             height={28}
             className="size-7 rounded-full object-cover"
           />
-          <span className="text-sm font-medium">© 2026 What Brandon Thinks</span>
+          <span className="text-sm font-medium">© 2026 What Frank Thinks</span>
         </Link>
         <nav className="flex flex-wrap items-center gap-x-5 text-sm text-muted-foreground">
           <Link href="/" className="inline-flex min-h-11 items-center underline-offset-2 transition-colors hover:text-foreground hover:underline">Home</Link>

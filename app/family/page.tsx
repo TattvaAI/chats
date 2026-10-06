@@ -1,8 +1,8 @@
 import Link from 'next/link';
 import { ArrowRight, Home, Shield, Award } from 'lucide-react';
-import { SiteHeader, SiteFooter } from '@/components/brandon/header';
-import { Testimonials } from '@/components/brandon/testimonials';
-import { StatsBanner } from '@/components/brandon/stats-banner';
+import { SiteHeader, SiteFooter } from '@/components/frank/header';
+import { Testimonials } from '@/components/frank/testimonials';
+import { StatsBanner } from '@/components/frank/stats-banner';
 
 export default function FamilyPage() {
   return (
@@ -18,10 +18,10 @@ export default function FamilyPage() {
 
             <div className="flex flex-col items-center gap-4 max-w-2xl">
               <h1 className="font-serif text-4xl font-normal leading-[1.18] tracking-tight text-foreground sm:text-5xl lg:text-6xl text-balance">
-                What does Brandon think of you and your family?
+                What does Frank think of you and your family?
               </h1>
               <p className="max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-                Upload the family WhatsApp group, or just the chat with your mum, dad, sister or brother. Brandon reads every message and writes who runs it and what nobody says out loud.
+                Upload the family WhatsApp group, or just the chat with your mum, dad, sister or brother. Frank reads every message and writes who runs it and what nobody says out loud.
               </p>
             </div>
 
@@ -61,7 +61,7 @@ export default function FamilyPage() {
                 </div>
                 <h3 className="font-serif text-lg font-medium">Who Actually Runs It</h3>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Spoiler alert: it isn&apos;t Dad. Brandon identifies the true emotional gatekeeper of the household.
+                  Spoiler alert: it isn&apos;t Dad. Frank identifies the true emotional gatekeeper of the household.
                 </p>
               </div>
 

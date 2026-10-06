@@ -9,7 +9,6 @@ import {
   ArrowRight,
   Upload,
   Sparkles,
-  Shield,
   FileText,
   CheckCircle2,
   AlertCircle,
@@ -21,31 +20,18 @@ import {
 import {
   useChatStore,
   ChatCategory,
-  ChatSource,
   ReportLanguage,
+  cleanName,
 } from '@/lib/store/useChatStore';
 import { parseWhatsAppChat, ParsedMessage } from '@/lib/parser/whatsapp';
 import { extractChatTxtFromZip, isZipFile } from '@/lib/parser/unzip';
 import { computeChatMetrics } from '@/lib/forensics/metrics';
 import { detectTurningPoint } from '@/lib/forensics/turning-point';
-
-const SAMPLE_CHAT = `[14/09/24, 21:14:02] Clara: Hey! Are we still on for tomorrow night?
-[14/09/24, 21:18:15] Lucas: Hey yeah definitely! 8pm at Bar Raval?
-[14/09/24, 21:19:00] Clara: Perfect, see you then 😊
-[15/09/24, 01:24:12] Clara: Had the best time tonight!
-[15/09/24, 01:26:05] Lucas: Me too, let's do it again really soon. Sleep well!
-[18/09/24, 18:32:10] Clara: Hey stranger, how's your week going?
-[18/09/24, 22:45:11] Lucas: Insane week at work haha, barely breathing. How are you?
-[18/09/24, 22:46:00] Clara: Surviving! Thinking of trying that new Italian spot Friday if you're free?
-[19/09/24, 11:15:32] Lucas: Might have plans with the boys Friday, let me check and let you know!
-[22/09/24, 14:12:00] Clara: Hey did you ever check?
-[23/09/24, 09:30:15] Lucas: Sorry totally crashed this weekend. Super hectic.
-[28/09/24, 19:40:11] Clara: Saw this meme and thought of you [Image]
-[29/09/24, 14:20:00] Lucas: Haha classic
-[05/10/24, 23:14:00] Clara: Are we ever going to talk properly again or are we doing the slow fade?
-[06/10/24, 16:45:12] Lucas: What do you mean? Nothing's changed, just crazy busy right now! We're good!
-[14/10/24, 20:15:00] Clara: Happy birthday Lucas! Hope it's a great one 🎉
-[15/10/24, 02:10:00] Lucas: Thanks Clara! Appreciate it 🙏`;
+import { AnalysisInput, isMeaningfulMessage, MAX_CHAT_PARTICIPANTS, normalizedParticipantName } from '@/lib/ai/input';
+import { createGuestCapability, saveGuestCapability } from '@/lib/store/access';
+import { refreshSession, useSession } from '@/lib/hooks/useSession';
+import { responseError } from '@/lib/hooks/report-client';
+import { SiteHeader, SiteFooter } from '@/components/frank/header';
 
 interface CategoryOption {
   id: ChatCategory;
@@ -114,47 +100,31 @@ const CATEGORIES: CategoryOption[] = [
   },
 ];
 
-const DEMO_PHASES = [
-  'Reading your messages…',
-  'Decoding the inside jokes…',
-  'Ranking everyone\'s texting habits…',
-  'Counting who double-texts the most…',
-  'Auditing the voice note situation…',
-  'Judging the emoji choices… respectfully…',
-  'Detecting passive-aggressive "ok" replies…',
-  'Finding who only shows up for the gossip…',
-  'Measuring main-character energy…',
-  'Tallying the plans that never happened…',
-  'Reading between the lines…',
-  'Almost there, double-checking the receipts…',
-  'Polishing your report…',
-];
-
 const LANGUAGES: { id: ReportLanguage; label: string; flag: string; desc: string }[] = [
   {
     id: 'en',
     label: 'English',
     flag: '🇬🇧',
-    desc: "Brandon's unfiltered opinions, razor-sharp wit, and psychological breakdown.",
+    desc: "Frank's unfiltered opinions, razor-sharp wit, and psychological breakdown.",
   },
   {
     id: 'fr',
     label: 'Français',
     flag: '🇫🇷',
-    desc: 'Analyse incisive, esprit mordant et vérités sans complaisance par Brandon.',
+    desc: 'Analyse incisive, esprit mordant et vérités sans complaisance par Frank.',
   },
   {
     id: 'es',
     label: 'Español',
     flag: '🇪🇸',
-    desc: 'Análisis implacable, sátira afilada y diagnóstico directo sin filtros por Brandon.',
+    desc: 'Análisis implacable, sátira afilada y diagnóstico directo sin filtros por Frank.',
   },
 ];
 
 function getSenders(msgs: ParsedMessage[]): string[] {
   const senders = new Set<string>();
   for (const m of msgs) {
-    if (m.sender && !m.isSystem && m.sender !== 'System') {
+    if (m.sender && !m.isSystem) {
       senders.add(m.sender);
     }
   }
@@ -177,388 +147,181 @@ export default function SetupFunnel() {
     fileName,
     parsedMessages,
     stats,
-    turningPoint,
-    scanProgress,
-    scanStage,
-    myName,
-    nameMap,
-    email,
     setCategory,
     setSource,
     setUserNote,
     setReportLanguage,
     setUploadedChat,
     setParsedData,
-    setScanProgress,
-    setPreview,
-    setFullReport,
-    setAiLive,
-    ensureReportIdentity,
-    setDeleteToken,
-    persistToLocal,
     setMyName,
     setNameMap,
-    setEmail,
   } = useChatStore();
 
-  // S2 pending source state: Continue disabled until chosen
-  const [pendingSource, setPendingSource] = useState<ChatSource | null>(source || null);
-
-  // S5 raw messages reference: holds unrenamed parsed messages so renames apply BEFORE recomputing metrics
+  const session = useSession();
+  const [authConfig, setAuthConfig] = useState<{ requireAuth: boolean } | null>(null);
+  const [configError, setConfigError] = useState('');
+  const [configAttempt, setConfigAttempt] = useState(0);
   const rawParsedMessagesRef = useRef<ParsedMessage[]>([]);
-
-  // S5 local state for person picker and aliasing inputs
-  const [selectedMyName, setSelectedMyName] = useState<string>(myName || '');
-  const [nameAliases, setNameAliases] = useState<Record<string, string>>(nameMap || {});
+  const pendingUploadRef = useRef<{ text: string; name: string } | null>(null);
+  const fileVersionRef = useRef(0);
+  const submittingRef = useRef(false);
+  const [selectedMyName, setSelectedMyName] = useState('');
+  const [nameAliases, setNameAliases] = useState<Record<string, string>>({});
   const [rawSenders, setRawSenders] = useState<string[]>([]);
-
-  // S7 email input & validation state
-  const [inputEmail, setInputEmail] = useState<string>(email || '');
-  const [emailError, setEmailError] = useState<string>('');
-  const [phaseIdx, setPhaseIdx] = useState<number>(0);
-
-  // Background analysis state & refs to pre-warm report while user browses numbers
-  const backgroundAnalysisRef = useRef<Promise<unknown> | null>(null);
-  const backgroundParamsRef = useRef<{
-    category: string;
-    reportLanguage: string;
-    userNote?: string;
-    myName?: string;
-  } | null>(null);
-  const [bgStatus, setBgStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
+  const [dateOrder, setDateOrder] = useState<'auto' | 'dmy' | 'mdy'>('auto');
+  const [dateAmbiguous, setDateAmbiguous] = useState(false);
+  const [isReading, setIsReading] = useState(false);
+  const [submissionStage, setSubmissionStage] = useState('Preparing your report request…');
+  const meaningfulCount = parsedMessages.filter(isMeaningfulMessage).length;
 
   useEffect(() => {
-    if (!isProcessing) return;
-    const interval = setInterval(() => {
-      setPhaseIdx((prev) => (prev + 1) % DEMO_PHASES.length);
-    }, 1300);
-    return () => clearInterval(interval);
-  }, [isProcessing]);
+    const controller = new AbortController();
+    async function checkConfig() {
+      setConfigError('');
+      try {
+        const response = await fetch('/api/auth/config', { cache: 'no-store', signal: controller.signal });
+        if (!response.ok) throw new Error('We could not check whether sign-in is required. Please retry before uploading.');
+        const data = await response.json();
+        if (typeof data.requireAuth !== 'boolean') throw new Error('The upload settings could not be verified. Please retry.');
+        if (!controller.signal.aborted) setAuthConfig(data);
+      } catch (error) { if (!controller.signal.aborted) setConfigError(error instanceof Error ? error.message : 'Could not check upload settings.'); }
+    }
+    void checkConfig();
+    return () => controller.abort();
+  }, [configAttempt]);
 
-  // Keep rawParsedMessagesRef in sync when parsedMessages is initially loaded.
-  // Ref is read here inside the effect (not during render); state sync is
-  // deferred to a microtask so setState never runs synchronously in the effect.
+  // A new setup visit starts a new in-memory draft; previous saved reports stay on the server.
   useEffect(() => {
-    if (parsedMessages.length > 0 && rawParsedMessagesRef.current.length === 0) {
-      rawParsedMessagesRef.current = parsedMessages;
-      const senders = getSenders(parsedMessages);
-      queueMicrotask(() => setRawSenders(senders));
+    useChatStore.getState().reset();
+    return () => { fileVersionRef.current += 1; };
+  }, []);
+
+  const triggerAnalysis = async () => {
+    const profile = await refreshSession();
+    if (authConfig?.requireAuth && !profile) throw new Error('Please sign in before creating your report.');
+    const active = useChatStore.getState();
+    if (!active.parsedMessages.length || !active.myName) throw new Error('Your upload session changed. Please upload the chat and select your name again.');
+    const conversationId = active.ensureReportIdentity();
+    const payload = AnalysisInput.safeParse({ conversationId, category: active.category, source: active.source, myName: active.myName, userNote: active.userNote, reportLanguage: active.reportLanguage,
+      messages: active.parsedMessages.map(message => ({ sender: message.sender, content: message.content, at: new Date(message.timestamp).toISOString(), isSystem: message.isSystem, isReaction: message.isReaction })) });
+    if (!payload.success) throw new Error(payload.error.issues[0]?.message || 'Check the chat and participant names before continuing.');
+    let token: string | null = null;
+    if (!profile) {
+      token = active.deleteToken || createGuestCapability();
+      // Save the recoverable capability BEFORE sending any chat data or waiting for a response.
+      saveGuestCapability(conversationId, token);
+      active.setDeleteToken(token);
     }
-  }, [parsedMessages]);
-
-  // Sync default myName when rawSenders are known
-  useEffect(() => {
-    if (rawSenders.length > 0 && !selectedMyName) {
-      const next = myName || rawSenders[0];
-      queueMicrotask(() => setSelectedMyName(next));
-    }
-  }, [rawSenders, selectedMyName, myName]);
-
-  // Initialize aliases from raw senders
-  useEffect(() => {
-    if (rawSenders.length > 0) {
-      queueMicrotask(() => {
-        setNameAliases((prev) => {
-          const next = { ...prev };
-          for (const sender of rawSenders) {
-            if (!next[sender]) {
-              next[sender] = nameMap[sender] || sender;
-            }
-          }
-          return next;
-        });
-      });
-    }
-  }, [rawSenders, nameMap]);
-
-  // Trigger analysis in the background
-  const triggerAnalysis = (
-    customParsed?: ParsedMessage[],
-    customStats?: typeof stats,
-    customTurningPoint?: typeof turningPoint,
-    overrideParams?: { myName?: string; userNote?: string; reportLanguage?: ReportLanguage; email?: string }
-  ) => {
-    const activeMsgs =
-      customParsed ||
-      (rawParsedMessagesRef.current.length > 0 ? rawParsedMessagesRef.current : parsedMessages);
-    const activeStats = customStats || stats;
-    const activeTurningPoint =
-      customTurningPoint !== undefined ? customTurningPoint : turningPoint;
-
-    if (!activeMsgs || activeMsgs.length === 0 || !activeStats) return null;
-
-    // Build transcript sample
-    let transcriptSample = '';
-    if (activeMsgs.length <= 70) {
-      transcriptSample = activeMsgs.map((m) => `${m.sender}: ${m.content}`).join('\n');
-    } else {
-      const first50 = activeMsgs.slice(0, 50).map((m) => `${m.sender}: ${m.content}`).join('\n');
-      const last20 = activeMsgs.slice(-20).map((m) => `${m.sender}: ${m.content}`).join('\n');
-      transcriptSample = `${first50}\n\n[... intermediate messages omitted ...]\n\n${last20}`;
-    }
-
-    const messages = activeMsgs.map((m) => ({
-      sender: m.sender,
-      content: m.content,
-      at: new Date(m.timestamp).toISOString(),
-    }));
-
-    const conversationId = ensureReportIdentity();
-    const chosenLang = overrideParams?.reportLanguage || reportLanguage;
-    const chosenMyName = overrideParams?.myName || selectedMyName || myName;
-    let combinedNote =
-      overrideParams?.userNote !== undefined ? overrideParams.userNote : userNote;
-    if (chosenMyName && !combinedNote.includes(chosenMyName)) {
-      combinedNote = `[Context: The user requesting this analysis is "${chosenMyName}"].\n\n${combinedNote}`.trim();
-    }
-
-    backgroundParamsRef.current = {
-      category,
-      reportLanguage: chosenLang,
-      userNote: combinedNote,
-      myName: chosenMyName,
-    };
-
-    setBgStatus('running');
-
-    const userEmailToPass =
-      overrideParams?.email || inputEmail.trim() || email || undefined;
-    const currentDetailedStats = useChatStore.getState().detailedStats;
-
-    const promise = fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        category,
-        stats: activeStats,
-        detailedStats: currentDetailedStats || undefined,
-        turningPoint: activeTurningPoint,
-        transcriptSample,
-        messages,
-        userNote: combinedNote,
-        reportLanguage: chosenLang,
-        conversationId,
-        source,
-        myName: chosenMyName || undefined,
-        email: userEmailToPass,
-      }),
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error('Failed to analyze');
-        const data = await res.json();
-        setPreview(data.preview);
-        setFullReport(data.fullReport);
-        setAiLive(typeof data?.aiLive === 'boolean' ? data.aiLive : false);
-        if (typeof data?.deleteToken === 'string') {
-          setDeleteToken(data.deleteToken);
-        }
-        persistToLocal();
-        setBgStatus('completed');
-        return data;
-      })
-      .catch((err) => {
-        console.warn('[SetupFunnel] background analysis encountered error:', err);
-        setBgStatus('failed');
-        throw err;
-      });
-
-    backgroundAnalysisRef.current = promise;
-    return promise;
+    setSubmissionStage('Saving your analysis request…');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+      const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { 'x-conversation-token': token } : {}) }, body: JSON.stringify(payload.data), signal: controller.signal });
+      if (!response.ok) throw new Error(await responseError(response, 'Could not start the report. Please retry.'));
+      const data = await response.json();
+      if (data.conversationId !== conversationId || !['queued', 'running', 'failed', 'completed'].includes(data.status)) throw new Error('We could not confirm the report request. Retry to check the same request safely.');
+      return conversationId;
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw new Error('The connection timed out before we could confirm your report. Retry Create report to check the same request safely.');
+      throw error;
+    } finally { clearTimeout(timeout); }
   };
 
-  // S3: Process file content
-  const handleProcessFileContent = (rawContent: string, uploadFileName: string) => {
+  const resetUpload = () => {
+    fileVersionRef.current += 1;
+    setUploadedChat('', '');
+    rawParsedMessagesRef.current = [];
+    pendingUploadRef.current = null;
+    setRawSenders([]); setSelectedMyName(''); setNameAliases({});
+    setDateAmbiguous(false); setErrorMsg(''); setIsReading(false);
+  };
+
+  const handleProcessFileContent = (rawContent: string, uploadFileName: string, selectedOrder = dateOrder) => {
     setErrorMsg('');
-
-    const parsed = parseWhatsAppChat(rawContent);
-
-    // Guard: < 5 reject
-    if (parsed.messages.length < 5) {
-      setErrorMsg('Chat has fewer than 5 messages. Brandon needs at least 5 messages to give an opinion.');
+    // Do not silently interpret an export whose dates work in both regional formats.
+    const dates = [...rawContent.matchAll(/^\[?(\d{1,4})[/.\-](\d{1,2})[/.\-](\d{1,4})/gm)];
+    const regional = dates.filter(match => match[1].length !== 4);
+    const ambiguous = regional.length > 0 && regional.every(match => Number(match[1]) <= 12 && Number(match[2]) <= 12) && regional.some(match => match[1] !== match[2]);
+    if (selectedOrder === 'auto' && ambiguous) {
+      pendingUploadRef.current = { text: rawContent, name: uploadFileName };
+      setDateAmbiguous(true);
+      setErrorMsg('The dates in this export could use day/month or month/day. Choose the matching date format below to keep the timeline accurate.');
       return;
     }
-
-    // Guard: > 15000 reject
-    if (parsed.messages.length > 15000) {
-      setErrorMsg(
-        `Chat exceeds maximum limit of 15,000 messages (${parsed.messages.length.toLocaleString()} messages found). Please export a shorter timeframe or trim the file.`
-      );
-      return;
-    }
-
+    setDateAmbiguous(false);
+    const parsed = parseWhatsAppChat(rawContent, selectedOrder === 'auto' ? undefined : selectedOrder);
+    const readable = parsed.messages.filter(isMeaningfulMessage);
+    if (readable.length < 5) { setErrorMsg('Frank needs at least 5 text messages, excluding system notices, reactions, deleted messages and media placeholders.'); return; }
+    if (parsed.messages.length > 15000) { setErrorMsg(`This export contains ${parsed.messages.length.toLocaleString()} entries. Please choose a shorter export with up to 15,000 entries.`); return; }
+    const senders = getSenders(parsed.messages);
+    if (senders.length < 2 || senders.length > MAX_CHAT_PARTICIPANTS) { setErrorMsg(`Choose a chat with 2–${MAX_CHAT_PARTICIPANTS} participants.`); return; }
+    if (new Set(readable.map(message => message.sender)).size < 2) { setErrorMsg('Include text messages from at least two participants.'); return; }
+    const timestamps = parsed.messages.map(message => message.timestamp.getTime());
+    if (Math.min(...timestamps) < Date.UTC(1970, 0, 1) || Math.max(...timestamps) >= Date.UTC(2101, 0, 1) || Math.max(...timestamps) - Math.min(...timestamps) > 50 * 366 * 86400000) { setErrorMsg('Choose an export with dates between 1970 and 2100 spanning no more than 50 years.'); return; }
     const calculatedStats = computeChatMetrics(parsed.messages);
     const calculatedTurningPoint = detectTurningPoint(parsed.messages);
-
-    // Store raw original messages in ref BEFORE any participant renaming occurs
-    rawParsedMessagesRef.current = parsed.messages;
-    const senders = getSenders(parsed.messages);
-    setRawSenders(senders);
-    const defaultName = senders[0] || '';
-    if (!selectedMyName) {
-      setSelectedMyName(defaultName);
-    }
-
     setUploadedChat(uploadFileName, rawContent);
+    rawParsedMessagesRef.current = parsed.messages;
+    pendingUploadRef.current = null;
+    setRawSenders(senders);
+    setSelectedMyName('');
+    setNameAliases(Object.fromEntries(senders.map(sender => [sender, sender])));
     setParsedData(parsed.messages, calculatedStats, calculatedTurningPoint);
-
-    // Kick off background analysis immediately as the user uploads!
-    triggerAnalysis(parsed.messages, calculatedStats, calculatedTurningPoint, { myName: defaultName });
-
-    // Smoothly transition to Step 4 so user can read numbers right away while analysis runs!
-    setTimeout(() => {
-      setCurrentStep(4);
-    }, 250);
+    setCurrentStep(4);
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (isZipFile(file.name)) {
-      try {
-        const extracted = await extractChatTxtFromZip(file);
-        handleProcessFileContent(extracted.content, extracted.fileName);
-      } catch (err) {
-        setErrorMsg(
-          err instanceof Error ? err.message : 'Could not extract chat from ZIP file.'
-        );
-      }
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      handleProcessFileContent(content, file.name);
-    };
-    reader.readAsText(file);
+  const loadFile = async (file: File) => {
+    if (isProcessing) return;
+    resetUpload();
+    const version = fileVersionRef.current;
+    if (file.size > 10 * 1024 * 1024) { setErrorMsg('Please upload a file smaller than 10 MB.'); return; }
+    if (!/\.(?:txt|zip)$/i.test(file.name)) { setErrorMsg('Choose a WhatsApp or iMessage export in .txt or .zip format.'); return; }
+    setIsReading(true);
+    try {
+      const extracted = isZipFile(file.name) ? await extractChatTxtFromZip(file) : { content: await file.text(), fileName: file.name };
+      if (version === fileVersionRef.current) handleProcessFileContent(extracted.content, extracted.fileName);
+    } catch (error) { if (version === fileVersionRef.current) setErrorMsg(error instanceof Error ? error.message : 'Could not read this file. Please try another export.'); }
+    finally { if (version === fileVersionRef.current) setIsReading(false); }
   };
 
-  // S5: Apply rename BEFORE metrics via useRef
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) await loadFile(file);
+  };
+
   const handleApplyRenameAndContinue = () => {
-    const baseMessages =
-      rawParsedMessagesRef.current.length > 0
-        ? rawParsedMessagesRef.current
-        : parsedMessages;
-
-    // Apply renaming mapping directly onto the raw messages
-    const renamedMessages: ParsedMessage[] = baseMessages.map((m) => {
-      const alias = nameAliases[m.sender]?.trim();
-      return {
-        ...m,
-        sender: alias && alias.length > 0 ? alias : m.sender,
-      };
-    });
-
-    // Determine clean myName
-    const activeRaw = selectedMyName || rawSenders[0] || '';
-    const cleanChosenName = nameAliases[activeRaw]?.trim() || activeRaw;
-
-    setMyName(cleanChosenName);
-    setNameMap(nameAliases);
-
-    // Compute metrics with renamed messages BEFORE updating store
-    const newStats = computeChatMetrics(renamedMessages);
-    const newTurningPoint = detectTurningPoint(renamedMessages);
-
-    setParsedData(renamedMessages, newStats, newTurningPoint);
+    setErrorMsg('');
+    if (!rawSenders.includes(selectedMyName)) { setErrorMsg('Select which participant is you before continuing.'); return; }
+    const aliases = Object.fromEntries(rawSenders.map(sender => [sender, (Object.prototype.hasOwnProperty.call(nameAliases, sender) ? nameAliases[sender] : sender).trim()]));
+    const values = Object.values(aliases);
+    if (values.some(name => !name || name.length > 100 || /[\u0000-\u001f\u007f]/.test(name))) { setErrorMsg('Give each participant a name between 1 and 100 characters, without control characters.'); return; }
+    if (new Set(values.map(normalizedParticipantName)).size !== values.length) { setErrorMsg('Give each participant a distinct name. Names must also differ when capitalization and spacing are ignored.'); return; }
+    const renamedMessages = rawParsedMessagesRef.current.map(message => ({ ...message, sender: message.isSystem ? message.sender : cleanName(message.sender, aliases) }));
+    setMyName(cleanName(selectedMyName, aliases));
+    setNameMap(aliases);
+    setParsedData(renamedMessages, computeChatMetrics(renamedMessages), detectTurningPoint(renamedMessages));
     setCurrentStep(6);
   };
 
-  // S7: Trigger final analysis flow
   const handleStartAnalysis = async () => {
-    if (!stats || !parsedMessages.length) {
-      setErrorMsg('No chat data found. Please upload your chat first.');
-      setCurrentStep(3);
-      return;
-    }
-
-    // Validate email
-    const trimmedEmail = inputEmail.trim();
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
-      setEmailError('Please enter a valid email address.');
-      return;
-    }
-
-    // Store email (NO external send call, stored for user identity)
-    setEmail(trimmedEmail);
-
+    if (!stats || !parsedMessages.length) { setErrorMsg('No chat data found. Please upload your chat first.'); setCurrentStep(3); return; }
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     try {
-      setIsProcessing(true);
-      setErrorMsg('');
-
-      const conversationId = ensureReportIdentity();
-      let reportPath = `/c/${conversationId}/reports/1`;
-      try {
-        const meRes = await fetch('/api/auth/me');
-        if (!meRes.ok && trimmedEmail) {
-          reportPath = `/c/${conversationId}/reports/1?welcome=1`;
-        }
-      } catch {
-        if (trimmedEmail) reportPath = `/c/${conversationId}/reports/1?welcome=1`;
-      }
-
-      // Send email containing report link to user's provided email address
-      if (trimmedEmail) {
-        fetch('/api/send-report-email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: trimmedEmail,
-            conversationId,
-            host: typeof window !== 'undefined' ? window.location.host : undefined,
-          }),
-        }).catch((err) => console.warn('[SetupFunnel] Email send error:', err));
-      }
-
-      // Check if background analysis has completed or is in-flight
-      const bgPromise = backgroundAnalysisRef.current;
-      const prevParams = backgroundParamsRef.current;
-      const currentChosenName = selectedMyName || myName;
-      const hasChangedParams =
-        prevParams &&
-        (prevParams.reportLanguage !== reportLanguage ||
-          (userNote && !prevParams.userNote?.includes(userNote)) ||
-          (currentChosenName && prevParams.myName !== currentChosenName));
-
-      // CASE 1: Pre-warming finished while user was reading numbers! (Instant 0s wait)
-      if (!hasChangedParams && bgStatus === 'completed' && useChatStore.getState().fullReport) {
-        setScanProgress(100, 'Report ready!');
-        await new Promise((r) => setTimeout(r, 200));
-        router.push(reportPath);
-        return;
-      }
-
-      // CASE 2: Pre-warming is still in flight (user quickly clicked through) -> wait for in-flight promise!
-      if (!hasChangedParams && bgPromise && bgStatus === 'running') {
-        setScanProgress(60, 'Brandon is polishing your report…');
-        await bgPromise;
-        setScanProgress(100, 'Report ready!');
-        await new Promise((r) => setTimeout(r, 200));
-        router.push(reportPath);
-        return;
-      }
-
-      // CASE 3: Parameters changed (e.g. language or custom userNote changed) or fresh trigger
-      setScanProgress(45, 'Brandon is reading your messages…');
-      await triggerAnalysis(undefined, undefined, undefined, {
-        myName: currentChosenName,
-        userNote,
-        reportLanguage,
-        email: trimmedEmail,
-      });
-
-      setScanProgress(100, 'Report ready!');
-      await new Promise((r) => setTimeout(r, 200));
-      router.push(reportPath);
-    } catch (err: unknown) {
-      console.error('Processing error:', err);
-      setErrorMsg('An unexpected error occurred during chat analysis. Please check your file.');
-    } finally {
-      setIsProcessing(false);
-    }
+      setIsProcessing(true); setErrorMsg(''); setSubmissionStage('Checking your account and preparing the request…');
+      const conversationId = await triggerAnalysis();
+      useChatStore.getState().reset();
+      router.push(`/c/${conversationId}`);
+    } catch (error) { setErrorMsg(error instanceof Error ? error.message : 'The report request could not be confirmed. Retry to check the same request safely.'); }
+    finally { setIsProcessing(false); submittingRef.current = false; }
   };
+
+  if (!authConfig || session.status === 'checking' || session.status === 'error' || (authConfig.requireAuth && !session.profile)) {
+    const loading = (!authConfig && !configError) || session.status === 'checking';
+    const authError = configError || session.error;
+    return <div className="flex min-h-screen flex-col"><SiteHeader /><main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center gap-5 px-6 py-24"><h1 className="font-serif text-3xl">{loading ? 'Preparing your upload' : authError ? 'We could not check your account' : 'Sign in to create your report'}</h1><p role={authError ? 'alert' : 'status'} className="text-sm leading-relaxed text-muted-foreground">{authError || (loading ? 'Checking the site’s upload settings…' : 'Your report will be saved to your account so you can return to it from any device. Sign in before choosing a private chat file.')}</p>{authError ? <button onClick={() => { setConfigAttempt(value => value + 1); void session.retry().catch(() => undefined); }} className="rounded-xl bg-neutral-900 px-6 py-3 text-sm text-white">Retry</button> : !loading && <Link href="/login?next=%2Fsetup" className="rounded-xl bg-neutral-900 px-6 py-3 text-center text-sm text-white">Continue to sign in</Link>}</main><SiteFooter /></div>;
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
@@ -606,6 +369,7 @@ export default function SetupFunnel() {
       {/* MAIN CONTAINER: max-w-xl */}
       <main className="flex-1 px-4 py-8 sm:py-12">
         <div className="mx-auto flex w-full max-w-xl flex-col gap-8">
+          {errorMsg && <div role="alert" className="mb-6 flex items-start gap-2.5 rounded-xl border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive"><AlertCircle className="mt-0.5 size-4 shrink-0" /><span>{errorMsg}</span></div>}
           {/* STEP 1: TYPE (6 CARDS) */}
           {currentStep === 1 && (
             <div className="flex flex-col gap-6 animate-in fade-in duration-200">
@@ -614,7 +378,7 @@ export default function SetupFunnel() {
                   What kind of chat is this?
                 </h1>
                 <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
-                  Pick the one that fits best. It helps Brandon understand who everyone is to each other.
+                  Pick the one that fits best. It helps Frank understand who everyone is to each other.
                 </p>
               </div>
 
@@ -674,7 +438,6 @@ export default function SetupFunnel() {
                   type="button"
                   onClick={() => {
                     setSource('whatsapp');
-                    setPendingSource('whatsapp');
                     setCurrentStep(3);
                   }}
                   className={`flex items-start justify-between rounded-2xl border bg-white p-5 text-left cursor-pointer transition-all active:scale-[0.99] ${
@@ -706,7 +469,6 @@ export default function SetupFunnel() {
                   type="button"
                   onClick={() => {
                     setSource('imessage');
-                    setPendingSource('imessage');
                     setCurrentStep(3);
                   }}
                   className={`flex items-start justify-between rounded-2xl border bg-white p-5 text-left cursor-pointer transition-all active:scale-[0.99] ${
@@ -724,7 +486,7 @@ export default function SetupFunnel() {
                         iMessage
                       </span>
                       <span className="text-[13px] text-neutral-500 leading-relaxed">
-                        Export with our Mac app — only from a Mac.
+                        Bring a text export of one iMessage conversation from your Mac.
                       </span>
                     </div>
                   </div>
@@ -748,15 +510,12 @@ export default function SetupFunnel() {
                 </p>
               </div>
 
-              {errorMsg && (
-                <div className="flex items-center gap-2.5 rounded-xl bg-destructive/10 border border-destructive/20 p-4 text-xs font-medium text-destructive">
-                  <AlertCircle className="size-4 shrink-0" />
-                  <span>{errorMsg}</span>
-                </div>
-              )}
 
+
+              <label className="flex flex-col gap-2 text-sm font-medium">Dates in your export<select value={dateOrder} onChange={event => { const value = event.target.value as 'auto' | 'dmy' | 'mdy'; setDateOrder(value); const current = useChatStore.getState(); const pending = pendingUploadRef.current || (current.rawText ? { text: current.rawText, name: current.fileName } : null); if (pending) { resetUpload(); handleProcessFileContent(pending.text, pending.name, value); } }} className={`rounded-xl border bg-background px-3 py-3 text-sm ${dateAmbiguous ? 'border-amber-500' : 'border-border'}`}><option value="auto">Detect from the export</option><option value="dmy">Day / month / year (31/12/2026)</option><option value="mdy">Month / day / year (12/31/2026)</option></select><span className="text-xs font-normal text-muted-foreground">Choose the format used by your phone. Ambiguous dates require a choice.</span></label>
+              {isReading && <p role="status" className="text-sm text-muted-foreground">Reading the file on your device…</p>}
               {/* If chat is parsed: show confidence, N messages, Excellent|Thin, change-file */}
-              {parsedMessages.length >= 5 && fileName && !errorMsg ? (
+              {meaningfulCount >= 5 && fileName && !errorMsg ? (
                 <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-xs">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3">
@@ -768,13 +527,13 @@ export default function SetupFunnel() {
                           {fileName}
                         </span>
                         <span className="font-mono text-xs text-muted-foreground">
-                          {parsedMessages.length.toLocaleString()} messages verified
+                          {meaningfulCount.toLocaleString()} text messages ready for analysis
                         </span>
                       </div>
                     </div>
 
                     {/* Excellent or Thin Pill */}
-                    {parsedMessages.length >= 80 ? (
+                    {meaningfulCount >= 80 ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-950 shrink-0">
                         <CheckCircle2 className="size-3.5" />
                         <span>Excellent</span>
@@ -791,13 +550,7 @@ export default function SetupFunnel() {
                   <div className="flex items-center justify-between pt-2 border-t border-border/40">
                     <button
                       type="button"
-                      onClick={() => {
-                        setUploadedChat('', '');
-                        setParsedData([], null, null);
-                        rawParsedMessagesRef.current = [];
-                        setRawSenders([]);
-                        setErrorMsg('');
-                      }}
+                      onClick={resetUpload}
                       className="text-xs font-medium text-muted-foreground hover:text-foreground underline underline-offset-4 cursor-pointer transition-colors"
                     >
                       Change file
@@ -821,31 +574,10 @@ export default function SetupFunnel() {
                     setDragActive(true);
                   }}
                   onDragLeave={() => setDragActive(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setDragActive(false);
-                    const file = e.dataTransfer.files?.[0];
-                    if (file) {
-                      if (isZipFile(file.name)) {
-                        extractChatTxtFromZip(file)
-                          .then((extracted) => {
-                            handleProcessFileContent(extracted.content, extracted.fileName);
-                          })
-                          .catch((err: unknown) => {
-                            setErrorMsg(
-                              err instanceof Error
-                                ? err.message
-                                : 'Could not extract chat from ZIP file.'
-                            );
-                          });
-                      } else {
-                        const reader = new FileReader();
-                        reader.onload = (evt) => {
-                          handleProcessFileContent(evt.target?.result as string, file.name);
-                        };
-                        reader.readAsText(file);
-                      }
-                    }
+                  onDrop={(event) => {
+                    event.preventDefault(); setDragActive(false);
+                    const file = event.dataTransfer.files?.[0];
+                    if (file) void loadFile(file);
                   }}
                   className={`relative flex flex-col items-center justify-center gap-3.5 rounded-2xl border-2 border-dashed p-10 text-center transition-all bg-card ${
                     dragActive
@@ -861,17 +593,22 @@ export default function SetupFunnel() {
                       Click to upload or drag &amp; drop
                     </span>
                     <span className="text-xs text-muted-foreground leading-relaxed">
-                      Plaintext export (<code>.txt</code>) or WhatsApp zip bundle (<code>.zip</code>). Between 5 and 15,000 messages.
+                      Plaintext export (<code>.txt</code>) or WhatsApp zip bundle (<code>.zip</code>). At least 5 text messages, up to 15,000 entries and 8 participants.
                     </span>
                   </div>
+
                   <input
                     type="file"
+                    aria-label="Choose your chat export"
+                    disabled={isReading}
                     accept=".txt,.zip"
                     onChange={handleFileUpload}
                     className="absolute inset-0 size-full cursor-pointer opacity-0"
                   />
                 </div>
               )}
+              <details className="mb-5 rounded-xl border border-border p-4 text-left text-sm"><summary className="cursor-pointer font-medium">How to export a WhatsApp chat</summary><ol className="mt-3 list-decimal space-y-2 pl-5"><li>Open the conversation in WhatsApp.</li><li>Tap the person or group name on iPhone; on Android, open the three-dot menu.</li><li>Choose Export chat (under More on Android).</li><li>Select Without media.</li><li>Save the TXT or ZIP file to your device.</li><li>Upload it here and check the participant names.</li><li>Choose Create report when you are ready to send it for analysis.</li></ol></details>
+              {source === 'imessage' && <Link href="/imessage" className="text-sm underline">How to export iMessage from your Mac</Link>}
             </div>
           )}
 
@@ -883,7 +620,7 @@ export default function SetupFunnel() {
                   Your numbers.
                 </h1>
                 <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
-                  What your chat looks like from the outside, before Brandon reads a single message.
+                  What your chat looks like from the outside, before Frank reads a single message.
                 </p>
               </div>
 
@@ -905,7 +642,7 @@ export default function SetupFunnel() {
                     </span>
                   </div>
                   <p className="text-xs text-[#0B3B2E] leading-relaxed pt-1">
-                    {stats.dateRange.durationDays || 1} active days, {stats.totalConversations} separate conversations ({stats.dateRange.start || 'Start'} to {stats.dateRange.end || 'End'}).
+                    {stats.activeDays ?? 0} active days, {stats.totalConversations} separate conversations ({stats.dateRange.start || 'Start'} to {stats.dateRange.end || 'End'}).
                   </p>
                 </div>
 
@@ -921,14 +658,14 @@ export default function SetupFunnel() {
                     <span className="text-4xl sm:text-5xl font-extrabold tracking-tight">
                       {stats.participants[0]?.medianResponseTimeMinutes != null
                         ? `${stats.participants[0].medianResponseTimeMinutes}m`
-                        : 'Fast'}
+                        : '—'}
                     </span>
                     <span className="text-sm font-semibold text-[#2A1A5E]">
                       typical reply time
                     </span>
                   </div>
                   <p className="text-xs text-[#2A1A5E] leading-relaxed pt-1">
-                    Most active on {stats.mostActiveDay || 'weekdays'} around {stats.mostActiveHour ? `${stats.mostActiveHour}:00` : 'evening'}. {stats.participants.reduce((sum, p) => sum + (p.doubleTextCount || 0), 0)} follow-up texts sent while waiting.
+                    Most active on {stats.mostActiveDay || 'weekdays'} around {stats.mostActiveHour != null ? `${stats.mostActiveHour}:00` : 'evening'}. {stats.participants.reduce((sum, p) => sum + (p.doubleTextCount || 0), 0)} consecutive messages sent within a conversation.
                   </p>
                 </div>
 
@@ -946,7 +683,7 @@ export default function SetupFunnel() {
                     </span>
                   </div>
                   <p className="text-xs text-[#5E1A2A] leading-relaxed pt-1">
-                    {stats.participants.map((p) => `${p.name} wrote ${p.messageSharePercentage}%`).join(' · ') || 'Equal share'}. About {stats.participants.map((p) => `${p.name} ${p.avgWordsPerMessage} words/msg`).join(' · ')}.
+                    {stats.participants.map((p) => `${p.name} sent ${p.messageSharePercentage}% of messages`).join(' · ') || 'Equal share'}. About {stats.participants.map((p) => `${p.name} ${p.avgWordsPerMessage} words/msg`).join(' · ')}.
                   </p>
                 </div>
               </div>
@@ -973,7 +710,7 @@ export default function SetupFunnel() {
                   Who is who in this chat?
                 </h1>
                 <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
-                  Tell Brandon which person is you, and give each participant a clean first name so your report reads naturally.
+                  Tell Frank which person is you, and give each participant a clean first name so your report reads naturally.
                 </p>
               </div>
 
@@ -985,7 +722,7 @@ export default function SetupFunnel() {
                 <div className="flex flex-wrap gap-2.5">
                   {rawSenders.map((sender) => {
                     const isYou = selectedMyName === sender;
-                    const displayName = nameAliases[sender]?.trim() || sender;
+                    const displayName = cleanName(sender, nameAliases);
                     return (
                       <button
                         key={sender}
@@ -1047,7 +784,9 @@ export default function SetupFunnel() {
                           <span className="hidden sm:inline text-muted-foreground text-xs">→</span>
                           <input
                             type="text"
-                            value={nameAliases[sender] ?? sender}
+                            value={Object.prototype.hasOwnProperty.call(nameAliases, sender) ? nameAliases[sender] : sender}
+                            maxLength={100}
+                            aria-label={`Name for ${sender}`}
                             onChange={(e) =>
                               setNameAliases((prev) => ({
                                 ...prev,
@@ -1083,7 +822,7 @@ export default function SetupFunnel() {
             <div className="flex flex-col gap-6 animate-in fade-in duration-200">
               <div className="flex flex-col gap-2">
                 <h1 className="font-serif text-3xl sm:text-4xl font-bold tracking-tight text-foreground leading-[1.15]">
-                  Anything Brandon should know?
+                  Anything Frank should know?
                 </h1>
                 <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
                   Add anything you noticed, and pick what language the report is in.
@@ -1093,13 +832,14 @@ export default function SetupFunnel() {
               {/* Note Section */}
               <div className="flex flex-col gap-2.5">
                 <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  What should Brandon look at? (Optional)
+                  What should Frank look at? (Optional)
                 </label>
                 <textarea
                   value={userNote}
                   onChange={(e) => setUserNote(e.target.value)}
                   placeholder="e.g., We talked non-stop for 2 months, but after their birthday party, reply times jumped to 18 hours. Did they pull away or am I being paranoid?"
                   rows={4}
+                  maxLength={2000}
                   className="w-full rounded-2xl border border-neutral-200 bg-white p-4 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-900 focus:outline-hidden leading-relaxed shadow-2xs"
                 />
               </div>
@@ -1167,41 +907,13 @@ export default function SetupFunnel() {
                       Get your report
                     </h1>
                     <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
-                      Add your email so you can find this report again later.
+                      {session.profile ? 'Your free report will be saved to your account so you can return to it later.' : 'Read the full report for free. Sign in afterwards to save it across devices.'}
                     </p>
                   </div>
 
-                  {errorMsg && (
-                    <div className="flex items-center gap-2.5 rounded-xl bg-destructive/10 border border-destructive/20 p-4 text-xs font-medium text-destructive">
-                      <AlertCircle className="size-4 shrink-0" />
-                      <span>{errorMsg}</span>
-                    </div>
-                  )}
 
-                  {/* Email Input Box */}
-                  <div className="flex flex-col gap-2 rounded-2xl border border-neutral-200 bg-white p-5 shadow-xs">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Your Email Address
-                    </label>
-                    <input
-                      type="email"
-                      value={inputEmail}
-                      onChange={(e) => {
-                        setInputEmail(e.target.value);
-                        setEmailError('');
-                      }}
-                      placeholder="alex@example.com"
-                      className="rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-900 focus:outline-hidden"
-                    />
-                    {emailError && (
-                      <span className="text-xs font-medium text-destructive pt-1">
-                        {emailError}
-                      </span>
-                    )}
-                    <span className="text-[11px] text-muted-foreground pt-1">
-                      Only used to find your report again. No spam.
-                    </span>
-                  </div>
+
+                  <p className="rounded-xl border border-border p-4 text-sm leading-relaxed">When you choose Create report, your messages are sent to Frank and Google Vertex AI for analysis. Your report stays private unless you share its link. No payment is required.</p>
 
                   {/* Generate button */}
                   <div className="flex items-center justify-end pt-3">
@@ -1224,8 +936,8 @@ export default function SetupFunnel() {
                     <div className="absolute inset-0 rounded-full border-2 border-primary/40 animate-ping opacity-25" />
                     <span className="size-24 rounded-full overflow-hidden shadow-md ring-2 ring-primary/30">
                       <Image
-                        src="/images/brandon/avatar.webp"
-                        alt="Brandon"
+                        src="/images/frank/avatar.webp"
+                        alt="Frank"
                         width={96}
                         height={96}
                         className="size-full object-contain"
@@ -1236,20 +948,15 @@ export default function SetupFunnel() {
                   <div className="flex flex-col items-center gap-2.5 max-w-sm">
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-mono font-medium text-primary">
                       <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
-                      <span>{DEMO_PHASES[phaseIdx]}</span>
+                      <span>{submissionStage}</span>
                     </span>
                     <h2 className="font-serif text-2xl font-bold">
-                      Brandon is reading your chat…
+                      Starting your report…
                     </h2>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      Unfiltered truths, inside jokes, and who cares more.
+                      Once the request is saved, your report continues processing even if you leave the page.
                     </p>
-                    <div className="w-full bg-muted rounded-full h-1.5 mt-4 overflow-hidden">
-                      <div
-                        className="bg-primary h-1.5 rounded-full transition-all duration-300"
-                        style={{ width: `${Math.min(96, 20 + phaseIdx * 7)}%` }}
-                      />
-                    </div>
+
                   </div>
                 </div>
               )}

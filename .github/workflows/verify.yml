@@ -1,0 +1,41 @@
+name: Verify
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: frank_ci
+          POSTGRES_PASSWORD: local_ci_only
+          POSTGRES_DB: frank_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U frank_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Verify production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Test migrations, authentication and job recovery
+        env:
+          TEST_DATABASE_URL_FILE: ${{ runner.temp }}/frank-database-url
+          JOBS_TEST_DATABASE_FILE: ${{ runner.temp }}/frank-database-url
+        run: |
+          node -e "require('node:fs').writeFileSync(process.env.TEST_DATABASE_URL_FILE, 'postgresql://frank_ci:local_ci_only@localhost:5432/frank_ci', {mode: 0o600})"
+          node --test tests/auth.integration.test.cjs tests/jobs.integration.test.cjs

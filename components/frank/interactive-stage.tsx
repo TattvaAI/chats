@@ -81,8 +81,6 @@ export function InteractiveStage({ className = '' }: InteractiveStageProps = {})
 
   useEffect(() => {
     if (!isPlaying) return;
-    setIsVerdictReady(false);
-
     const verdictTimer = setTimeout(() => {
       setIsVerdictReady(true);
     }, 900);
@@ -112,8 +110,8 @@ export function InteractiveStage({ className = '' }: InteractiveStageProps = {})
           {!isPlaying ? (
             <>
               <div className="flex items-center justify-between text-xs font-mono uppercase tracking-wider text-muted-foreground">
-                <span>Interactive Preview</span>
-                <span>Brandon AI</span>
+                <span>Fictional example</span>
+                <span>Frank AI</span>
               </div>
 
               <div className="my-auto flex flex-col items-center justify-center gap-4 text-center">
@@ -129,7 +127,7 @@ export function InteractiveStage({ className = '' }: InteractiveStageProps = {})
                   <span>See how it works</span>
                 </button>
                 <p className="text-xs text-muted-foreground">
-                  Click to see what Brandon says about real chats
+                  An illustrated example with fictional conversations
                 </p>
               </div>
 
@@ -198,7 +196,7 @@ export function InteractiveStage({ className = '' }: InteractiveStageProps = {})
                       <Sparkles className="size-6 animate-spin" />
                     </div>
                     <span className="font-serif text-lg font-medium text-foreground">
-                      Brandon is thinking…
+                      Frank is thinking…
                     </span>
                     <span className="text-xs text-muted-foreground">
                       Reading between the lines of this {scene.label.toLowerCase()} chat
