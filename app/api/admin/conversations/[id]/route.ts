@@ -92,3 +92,30 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return privateResponse(NextResponse.json({ error: 'Failed to fetch conversation details.' }, { status: 500 }));
   }
 }
+
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  if (!(await isAuthorizedAdmin(req))) {
+    return privateResponse(NextResponse.json({ error: 'Unauthorized.' }, { status: 401 }));
+  }
+
+  if (!db) {
+    return privateResponse(NextResponse.json({ error: 'Database unavailable.' }, { status: 503 }));
+  }
+
+  try {
+    const { id } = await params;
+    const deleted = await db
+      .delete(conversations)
+      .where(eq(conversations.id, id))
+      .returning({ id: conversations.id });
+
+    if (!deleted.length) {
+      return privateResponse(NextResponse.json({ error: 'Conversation not found.' }, { status: 404 }));
+    }
+
+    return privateResponse(NextResponse.json({ success: true, id }));
+  } catch (error) {
+    console.error('[admin/conversations/[id] DELETE]', error);
+    return privateResponse(NextResponse.json({ error: 'Failed to delete conversation.' }, { status: 500 }));
+  }
+}
