@@ -4,7 +4,6 @@ import { SiteHeader, SiteFooter } from '@/components/frank/header';
 import { HeroCluster } from '@/components/frank/hero-cluster';
 import { MarqueePills } from '@/components/frank/marquee-pills';
 import { InteractiveStage } from '@/components/frank/interactive-stage';
-import { StatsBanner } from '@/components/frank/stats-banner';
 
 export default function HomePage() {
   return (
@@ -54,8 +53,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* STATS BANNER */}
-        <StatsBanner />
 
         {/* WALL OF LOVE */}
 

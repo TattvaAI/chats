@@ -168,8 +168,7 @@ export default function SetupFunnel() {
   const [selectedMyName, setSelectedMyName] = useState('');
   const [nameAliases, setNameAliases] = useState<Record<string, string>>({});
   const [rawSenders, setRawSenders] = useState<string[]>([]);
-  const [dateOrder, setDateOrder] = useState<'auto' | 'dmy' | 'mdy'>('auto');
-  const [dateAmbiguous, setDateAmbiguous] = useState(false);
+  const [dateOrder] = useState<'auto' | 'dmy' | 'mdy'>('auto');
   const [isReading, setIsReading] = useState(false);
   const [submissionStage, setSubmissionStage] = useState('Preparing your report request…');
   const meaningfulCount = parsedMessages.filter(isMeaningfulMessage).length;
@@ -233,22 +232,11 @@ export default function SetupFunnel() {
     rawParsedMessagesRef.current = [];
     pendingUploadRef.current = null;
     setRawSenders([]); setSelectedMyName(''); setNameAliases({});
-    setDateAmbiguous(false); setErrorMsg(''); setIsReading(false);
+    setErrorMsg(''); setIsReading(false);
   };
 
   const handleProcessFileContent = (rawContent: string, uploadFileName: string, selectedOrder = dateOrder) => {
     setErrorMsg('');
-    // Do not silently interpret an export whose dates work in both regional formats.
-    const dates = [...rawContent.matchAll(/^\[?(\d{1,4})[/.\-](\d{1,2})[/.\-](\d{1,4})/gm)];
-    const regional = dates.filter(match => match[1].length !== 4);
-    const ambiguous = regional.length > 0 && regional.every(match => Number(match[1]) <= 12 && Number(match[2]) <= 12) && regional.some(match => match[1] !== match[2]);
-    if (selectedOrder === 'auto' && ambiguous) {
-      pendingUploadRef.current = { text: rawContent, name: uploadFileName };
-      setDateAmbiguous(true);
-      setErrorMsg('The dates in this export could use day/month or month/day. Choose the matching date format below to keep the timeline accurate.');
-      return;
-    }
-    setDateAmbiguous(false);
     const parsed = parseWhatsAppChat(rawContent, selectedOrder === 'auto' ? undefined : selectedOrder);
     const readable = parsed.messages.filter(isMeaningfulMessage);
     if (readable.length < 5) { setErrorMsg('Frank needs at least 5 text messages, excluding system notices, reactions, deleted messages and media placeholders.'); return; }
@@ -506,13 +494,10 @@ export default function SetupFunnel() {
                   Upload your chat.
                 </h1>
                 <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
-                  Your file stays on this device until you hit Create.
+                  Export your chat without media and drop the file below.
                 </p>
               </div>
 
-
-
-              <label className="flex flex-col gap-2 text-sm font-medium">Dates in your export<select value={dateOrder} onChange={event => { const value = event.target.value as 'auto' | 'dmy' | 'mdy'; setDateOrder(value); const current = useChatStore.getState(); const pending = pendingUploadRef.current || (current.rawText ? { text: current.rawText, name: current.fileName } : null); if (pending) { resetUpload(); handleProcessFileContent(pending.text, pending.name, value); } }} className={`rounded-xl border bg-background px-3 py-3 text-sm ${dateAmbiguous ? 'border-amber-500' : 'border-border'}`}><option value="auto">Detect from the export</option><option value="dmy">Day / month / year (31/12/2026)</option><option value="mdy">Month / day / year (12/31/2026)</option></select><span className="text-xs font-normal text-muted-foreground">Choose the format used by your phone. Ambiguous dates require a choice.</span></label>
               {isReading && <p role="status" className="text-sm text-muted-foreground">Reading the file on your device…</p>}
               {/* If chat is parsed: show confidence, N messages, Excellent|Thin, change-file */}
               {meaningfulCount >= 5 && fileName && !errorMsg ? (
@@ -910,10 +895,6 @@ export default function SetupFunnel() {
                       {session.profile ? 'Your free report will be saved to your account so you can return to it later.' : 'Read the full report for free. Sign in afterwards to save it across devices.'}
                     </p>
                   </div>
-
-
-
-                  <p className="rounded-xl border border-border p-4 text-sm leading-relaxed">When you choose Create report, your messages are sent to Frank and Google Vertex AI for analysis. Your report stays private unless you share its link. No payment is required.</p>
 
                   {/* Generate button */}
                   <div className="flex items-center justify-end pt-3">

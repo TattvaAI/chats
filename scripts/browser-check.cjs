@@ -463,7 +463,7 @@ async function liveReports() {
     });
     await page.goto('/setup'); await heading(page, 'What kind of chat is this?');
     await page.getByRole('button', { name: /Any friend/ }).click(); await page.getByRole('button', { name: /WhatsApp/ }).click();
-    await page.getByLabel('Dates in your export').selectOption('dmy');
+    if (await page.getByLabel('Dates in your export').count()) await page.getByLabel('Dates in your export').selectOption('dmy');
     await page.getByLabel('Choose your chat export').setInputFiles(fixturePaths[index]);
     await heading(page, 'Your numbers.'); await page.getByRole('button', { name: 'Continue', exact: true }).click();
     const fields = page.locator('input[aria-label^="Name for "]');
