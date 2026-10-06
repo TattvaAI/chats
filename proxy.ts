@@ -29,4 +29,4 @@ export function proxy(req: NextRequest) {
   return privateResponse(NextResponse.next());
 }
 
-export const config = { matcher: ['/api/:path*', '/c/:path*', '/account/:path*', '/setup/:path*', '/login/:path*', '/chat/:path*'] };
+export const config = { matcher: ['/api/:path*', '/c/:path*', '/account/:path*', '/setup/:path*', '/login/:path*', '/chat/:path*', '/admin/:path*'] };
