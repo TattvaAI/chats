@@ -44,6 +44,16 @@ interface FeedbackItem {
   createdAt: string;
 }
 
+interface UserItem {
+  id: string;
+  email: string;
+  locale: string;
+  createdAt: string;
+  googleLinked: boolean;
+  reportCount: number;
+  latestChatAt: string | null;
+}
+
 interface ConversationDetail {
   conversation: {
     id: string;
@@ -92,8 +102,9 @@ export default function AdminPage() {
 
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [usersList, setUsersList] = useState<UserItem[]>([]);
   const [feedbackList, setFeedbackList] = useState<FeedbackItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'conversations' | 'feedback'>('conversations');
+  const [activeTab, setActiveTab] = useState<'conversations' | 'users' | 'feedback'>('conversations');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'ready' | 'queued' | 'running' | 'failed'>('all');
   
@@ -116,9 +127,39 @@ export default function AdminPage() {
     setTimeout(() => setAlertNotice(null), 5000);
   };
 
+  const loadAllData = useCallback(async (query = '') => {
+    try {
+      const convUrl = query ? `/api/admin/conversations?q=${encodeURIComponent(query)}` : '/api/admin/conversations';
+      const [statsRes, convsRes, usersRes, fbRes] = await Promise.all([
+        fetch('/api/admin/stats', { cache: 'no-store' }),
+        fetch(convUrl, { cache: 'no-store' }),
+        fetch('/api/admin/users', { cache: 'no-store' }),
+        fetch('/api/admin/feedback', { cache: 'no-store' }),
+      ]);
+      if (statsRes.ok) {
+        const s = await statsRes.json();
+        setStats(s.stats);
+      }
+      if (convsRes.ok) {
+        const c = await convsRes.json();
+        setConversations(c.items || []);
+      }
+      if (usersRes.ok) {
+        const u = await usersRes.json();
+        setUsersList(u.users || []);
+      }
+      if (fbRes.ok) {
+        const f = await fbRes.json();
+        setFeedbackList(f.items || []);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
+
   const loadStats = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/stats');
+      const res = await fetch('/api/admin/stats', { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setStats(data.stats);
@@ -131,7 +172,7 @@ export default function AdminPage() {
   const loadConversations = useCallback(async (query = '') => {
     try {
       const url = query ? `/api/admin/conversations?q=${encodeURIComponent(query)}` : '/api/admin/conversations';
-      const res = await fetch(url);
+      const res = await fetch(url, { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setConversations(data.items || []);
@@ -143,7 +184,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     let active = true;
-    fetch('/api/admin/auth')
+    fetch('/api/admin/auth', { cache: 'no-store' })
       .then(res => res.json())
       .then(data => {
         if (active) setAuthorized(Boolean(data.authorized));
@@ -158,13 +199,15 @@ export default function AdminPage() {
     if (!authorized) return;
     let active = true;
     Promise.all([
-      fetch('/api/admin/stats').then(r => r.ok ? r.json() : null),
-      fetch('/api/admin/conversations').then(r => r.ok ? r.json() : null),
-      fetch('/api/admin/feedback').then(r => r.ok ? r.json() : null),
-    ]).then(([statsData, convsData, fbData]) => {
+      fetch('/api/admin/stats', { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+      fetch('/api/admin/conversations', { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+      fetch('/api/admin/users', { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+      fetch('/api/admin/feedback', { cache: 'no-store' }).then(r => r.ok ? r.json() : null),
+    ]).then(([statsData, convsData, usersData, fbData]) => {
       if (!active) return;
       if (statsData?.stats) setStats(statsData.stats);
       if (convsData?.items) setConversations(convsData.items);
+      if (usersData?.users) setUsersList(usersData.users);
       if (fbData?.items) setFeedbackList(fbData.items);
     }).catch(console.error);
     return () => { active = false; };
@@ -302,6 +345,13 @@ export default function AdminPage() {
       return inTitle || inParticipants || inEmail || inId;
     });
   }, [conversations, statusFilter, search]);
+
+  // Filter registered users
+  const filteredUsers = useMemo(() => {
+    if (!search.trim()) return usersList;
+    const q = search.toLowerCase();
+    return usersList.filter(u => u.email.toLowerCase().includes(q) || u.id.toLowerCase().includes(q));
+  }, [usersList, search]);
 
   if (authorized === null) {
     return (
@@ -473,7 +523,12 @@ export default function AdminPage() {
               <div className="text-2xl font-semibold tracking-tight text-neutral-900">{stats.reports}</div>
             </div>
 
-            <div className="bg-white border border-neutral-200/80 rounded-2xl p-4 shadow-2xs">
+            <div 
+              onClick={() => setActiveTab('users')}
+              className={`bg-white border rounded-2xl p-4 shadow-2xs cursor-pointer hover:border-neutral-400 transition-all ${
+                activeTab === 'users' ? 'border-neutral-900 ring-2 ring-neutral-900/10' : 'border-neutral-200/80'
+              }`}
+            >
               <div className="flex items-center justify-between text-neutral-500 text-xs mb-1.5">
                 <span>Registered Users</span>
                 <Users className="w-4 h-4 text-neutral-400" />
@@ -514,6 +569,16 @@ export default function AdminPage() {
               Chats & Reports ({conversations.length})
             </button>
             <button
+              onClick={() => setActiveTab('users')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                activeTab === 'users'
+                  ? 'bg-white text-neutral-900 shadow-2xs font-semibold'
+                  : 'text-neutral-600 hover:text-neutral-900'
+              }`}
+            >
+              Registered Users ({usersList.length})
+            </button>
+            <button
               onClick={() => setActiveTab('feedback')}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
                 activeTab === 'feedback'
@@ -525,10 +590,10 @@ export default function AdminPage() {
             </button>
           </div>
 
-          {/* Search & Status Filters for Conversations */}
-          {activeTab === 'conversations' && (
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Status Filter Pill Buttons */}
+          {/* Search & Status Filters */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Status Filter Pill Buttons (on conversations tab) */}
+            {activeTab === 'conversations' && (
               <div className="flex items-center gap-1 bg-neutral-100 p-1 rounded-xl text-xs">
                 {(['all', 'ready', 'queued', 'running', 'failed'] as const).map((st) => (
                   <button
@@ -544,36 +609,36 @@ export default function AdminPage() {
                   </button>
                 ))}
               </div>
+            )}
 
-              {/* Search Bar */}
-              <div className="relative min-w-[220px] flex-1 sm:flex-initial">
-                <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  placeholder="Search title, sender, email..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-full bg-neutral-50 border border-neutral-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-neutral-900 placeholder-neutral-400 focus:outline-none focus:ring-1 focus:ring-neutral-900 transition-all"
-                />
-                {search && (
-                  <button
-                    onClick={() => setSearch('')}
-                    className="absolute right-2.5 top-2 text-neutral-400 hover:text-neutral-700"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-
-              <button
-                onClick={() => { loadConversations(); loadStats(); }}
-                className="p-2 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-xl transition-colors"
-                title="Refresh list"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-              </button>
+            {/* Search Bar */}
+            <div className="relative min-w-[220px] flex-1 sm:flex-initial">
+              <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder={activeTab === 'users' ? "Search users by email or ID..." : "Search title, sender, email..."}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full bg-neutral-50 border border-neutral-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-neutral-900 placeholder-neutral-400 focus:outline-none focus:ring-1 focus:ring-neutral-900 transition-all"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  className="absolute right-2.5 top-2 text-neutral-400 hover:text-neutral-700"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
-          )}
+
+            <button
+              onClick={() => { void loadAllData(search); }}
+              className="p-2 text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 rounded-xl transition-colors"
+              title="Refresh all live data"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         {/* Conversations Table */}
@@ -713,7 +778,100 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* Tab 2: User Feedback */}
+        {/* Tab 2: Registered Users */}
+        {activeTab === 'users' && (
+          <div className="bg-white border border-neutral-200/80 rounded-2xl overflow-hidden shadow-2xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-neutral-50/80 border-b border-neutral-200/80 text-neutral-500 font-medium">
+                  <tr>
+                    <th className="py-3 px-4">User Account</th>
+                    <th className="py-3 px-4">Sign-in Provider</th>
+                    <th className="py-3 px-4">Reports Generated</th>
+                    <th className="py-3 px-4">Signed Up At</th>
+                    <th className="py-3 px-4">Latest Activity</th>
+                    <th className="py-3 px-4 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {filteredUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-12 text-center text-neutral-400">
+                        No registered user accounts found.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredUsers.map((user) => {
+                      const isRecent = new Date().getTime() - new Date(user.createdAt).getTime() < 24 * 60 * 60 * 1000;
+                      return (
+                        <tr key={user.id} className="hover:bg-neutral-50/60 transition-colors">
+                          <td className="py-3 px-4 font-medium text-neutral-900">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs font-semibold">{user.email}</span>
+                              {isRecent && (
+                                <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold uppercase tracking-wider">
+                                  New
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] font-mono text-neutral-400 block mt-0.5">
+                              ID: {user.id}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4">
+                            {user.googleLinked ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-100 text-neutral-700 border border-neutral-200">
+                                Google OAuth
+                              </span>
+                            ) : (
+                              <span className="text-neutral-400">Email OTP</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            {user.reportCount > 0 ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                {user.reportCount} {user.reportCount === 1 ? 'report' : 'reports'}
+                              </span>
+                            ) : (
+                              <span className="text-neutral-400 italic text-[11px]">No chat uploaded yet</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-neutral-500 font-mono text-[11px]">
+                            {new Date(user.createdAt).toLocaleString(undefined, {
+                              month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                            })}
+                          </td>
+                          <td className="py-3 px-4 text-neutral-500 font-mono text-[11px]">
+                            {user.latestChatAt ? new Date(user.latestChatAt).toLocaleString(undefined, {
+                              month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                            }) : '—'}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            {user.reportCount > 0 ? (
+                              <button
+                                onClick={() => {
+                                  setSearch(user.email);
+                                  setActiveTab('conversations');
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg text-xs font-medium transition-colors"
+                              >
+                                View User&apos;s Chats
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-neutral-400">No activity yet</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 3: User Feedback */}
         {activeTab === 'feedback' && (
           <div className="space-y-3">
             {feedbackList.length === 0 ? (
